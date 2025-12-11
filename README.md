@@ -1,6 +1,6 @@
-> **本项目二次开发基于 [sora2api](https://github.com/TheSmallHanCat/sora2api)**
-> 
-> **原作者: [TheSmallHanCat](https://github.com/TheSmallHanCat)**
+#####> **本项目二次开发基于 [sora2api](https://github.com/TheSmallHanCat/sora2api)**
+####> 
+####> **原作者: [TheSmallHanCat](https://github.com/TheSmallHanCat)**
 
 # Sora2API
 
