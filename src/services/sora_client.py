@@ -105,7 +105,8 @@ class SoraClient:
                            json_data: Optional[Dict] = None,
                            multipart: Optional[Dict] = None,
                            add_sentinel_token: bool = False,
-                           max_retries: int = 3) -> Dict[str, Any]:
+                           max_retries: int = 3,
+                           infinite_retry_429: bool = False) -> Dict[str, Any]:
         """Make HTTP request with proxy support and 429 retry
 
         Args:
@@ -115,7 +116,8 @@ class SoraClient:
             json_data: JSON request body
             multipart: Multipart form data (for file uploads)
             add_sentinel_token: Whether to add openai-sentinel-token header (only for generation requests)
-            max_retries: Maximum number of retries for 429 errors
+            max_retries: Maximum number of retries for 429 errors (ignored if infinite_retry_429=True)
+            infinite_retry_429: If True, retry 429 errors infinitely until success
         """
         import asyncio
         
@@ -152,7 +154,12 @@ class SoraClient:
         # 使用持久化 session 维护 cookie
         session = await self._get_session(token)
         
-        for attempt in range(max_retries + 1):
+        attempt = 0
+        while True:
+            # Check if we should stop retrying (only for non-infinite mode)
+            if not infinite_retry_429 and attempt > max_retries:
+                break
+                
             kwargs = {
                 "headers": headers,
                 "timeout": self.timeout,
@@ -207,20 +214,26 @@ class SoraClient:
 
             # Handle 429 rate limit with retry
             if response.status_code == 429:
-                if attempt < max_retries:
+                # Check if it's a Cloudflare challenge (fake 429)
+                is_cf_challenge = 'cf-mitigated' in response.headers or 'Just a moment' in response.text
+                
+                if infinite_retry_429 or attempt < max_retries:
                     # Get retry-after header or use exponential backoff
                     retry_after = response.headers.get("Retry-After")
                     if retry_after:
                         try:
                             wait_time = int(retry_after)
                         except ValueError:
-                            wait_time = (attempt + 1) * 2  # 2, 4, 6 seconds
+                            wait_time = min((attempt + 1) * 2, 30)  # Cap at 30 seconds
                     else:
-                        wait_time = (attempt + 1) * 2  # Exponential backoff: 2, 4, 6 seconds
+                        wait_time = min((attempt + 1) * 2, 30)  # Exponential backoff, cap at 30s
                     
-                    print(f"⚠️ 429 Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                    debug_logger.log_info(f"429 Rate limit, waiting {wait_time}s before retry {attempt + 1}/{max_retries}")
+                    retry_msg = "infinite" if infinite_retry_429 else f"{attempt + 1}/{max_retries}"
+                    cf_msg = " (Cloudflare challenge)" if is_cf_challenge else ""
+                    print(f"⚠️ 429 Rate limit{cf_msg}, retrying in {wait_time}s (attempt {retry_msg})")
+                    debug_logger.log_info(f"429 Rate limit{cf_msg}, waiting {wait_time}s before retry {retry_msg}")
                     await asyncio.sleep(wait_time)
+                    attempt += 1
                     continue
                 else:
                     error_msg = f"Rate limit exceeded after {max_retries} retries"
@@ -246,6 +259,13 @@ class SoraClient:
                 else:
                     error_msg = f"API request failed: {response.status_code} - {response.text}"
                 
+                # Check for non-retryable errors (401, insufficient balance, etc.)
+                is_auth_error = response.status_code == 401
+                is_balance_error = any(keyword in error_msg.lower() for keyword in [
+                    'insufficient', 'balance', 'quota', 'limit exceeded', 'no credits',
+                    'out of', 'exhausted', 'remaining', '余额', '次数'
+                ])
+                
                 # Print error to console
                 print(f"❌ [SoraClient] {method} {url} failed: {response.status_code}")
                 print(f"   Response: {response.text[:500] if response.text else 'No response body'}")
@@ -255,6 +275,19 @@ class SoraClient:
                     status_code=response.status_code,
                     response_text=response.text
                 )
+                
+                # Don't retry auth errors or balance errors
+                if is_auth_error or is_balance_error:
+                    raise Exception(error_msg)
+                
+                # For other errors in infinite retry mode, retry
+                if infinite_retry_429 and response.status_code >= 500:
+                    wait_time = min((attempt + 1) * 2, 30)
+                    print(f"⚠️ Server error {response.status_code}, retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    attempt += 1
+                    continue
+                
                 raise Exception(error_msg)
 
             return response_json if response_json else response.json()
@@ -392,8 +425,8 @@ class SoraClient:
             "inpaint_items": inpaint_items
         }
 
-        # 生成请求需要添加 sentinel token
-        result = await self._make_request("POST", "/video_gen", token, json_data=json_data, add_sentinel_token=True)
+        # 生成请求需要添加 sentinel token，429 无限重试
+        result = await self._make_request("POST", "/video_gen", token, json_data=json_data, add_sentinel_token=True, infinite_retry_429=True)
         return result["id"]
     
     async def generate_video(self, prompt: str, token: str, orientation: str = "landscape",
@@ -430,8 +463,8 @@ class SoraClient:
         if style_id:
             json_data["style_id"] = style_id.lower()
 
-        # 生成请求需要添加 sentinel token
-        result = await self._make_request("POST", "/nf/create", token, json_data=json_data, add_sentinel_token=True)
+        # 生成请求需要添加 sentinel token，429 无限重试
+        result = await self._make_request("POST", "/nf/create", token, json_data=json_data, add_sentinel_token=True, infinite_retry_429=True)
         return result["id"]
     
     async def get_image_tasks(self, token: str, limit: int = 20) -> Dict[str, Any]:
@@ -941,7 +974,7 @@ class SoraClient:
             "n_frames": n_frames
         }
 
-        result = await self._make_request("POST", "/nf/create", token, json_data=json_data, add_sentinel_token=True)
+        result = await self._make_request("POST", "/nf/create", token, json_data=json_data, add_sentinel_token=True, infinite_retry_429=True)
         return result.get("id")
 
     async def generate_storyboard(self, prompt: str, token: str, orientation: str = "landscape",
@@ -985,5 +1018,5 @@ class SoraClient:
             "video_caption": None
         }
 
-        result = await self._make_request("POST", "/nf/create/storyboard", token, json_data=json_data, add_sentinel_token=True)
+        result = await self._make_request("POST", "/nf/create/storyboard", token, json_data=json_data, add_sentinel_token=True, infinite_retry_429=True)
         return result.get("id")
