@@ -86,9 +86,21 @@ class TokenManager:
             )
 
             if response.status_code != 200:
+                response_text = response.text[:1000] if response.text else 'No response body'
                 print(f"❌ [TokenManager] GET /me failed: {response.status_code}")
-                print(f"   Response: {response.text[:500] if response.text else 'No response body'}")
-                raise ValueError(f"Failed to get user info: {response.status_code} - {response.text[:200]}")
+                print(f"   Response: {response_text}")
+                
+                # Check if it's Cloudflare challenge
+                if "Just a moment" in response_text or "challenge-platform" in response_text:
+                    raise ValueError(f"Cloudflare challenge detected (status {response.status_code}). Your proxy IP may be blocked.")
+                
+                # Try to extract error message from JSON
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", {}).get("message", response_text[:200])
+                    raise ValueError(f"{response.status_code} - {error_msg}")
+                except:
+                    raise ValueError(f"{response.status_code} - {response_text[:500]}")
 
             return response.json()
 
