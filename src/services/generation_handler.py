@@ -66,6 +66,28 @@ MODEL_CONFIG = {
         "type": "video",
         "orientation": "portrait",
         "n_frames": 450
+    },
+    # Video models with 25s duration (750 frames)
+    "sora-video-25s": {
+        "type": "video",
+        "orientation": "landscape",
+        "n_frames": 750,
+        "model": "sy_8",
+        "size": "small"
+    },
+    "sora-video-landscape-25s": {
+        "type": "video",
+        "orientation": "landscape",
+        "n_frames": 750,
+        "model": "sy_8",
+        "size": "small"
+    },
+    "sora-video-portrait-25s": {
+        "type": "video",
+        "orientation": "portrait",
+        "n_frames": 750,
+        "model": "sy_8",
+        "size": "small"
     }
 }
 

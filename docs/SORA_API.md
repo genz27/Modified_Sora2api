@@ -2,6 +2,20 @@
 
 支持 OpenAI Sora 官方 API 格式的视频生成接口。
 
+## 可用模型
+
+| 模型 ID | 时长 | 方向 |
+|---------|------|------|
+| sora-video-10s | 10秒 | 横屏 |
+| sora-video-15s | 15秒 | 横屏 |
+| sora-video-25s | 25秒 | 横屏 |
+| sora-video-landscape-10s | 10秒 | 横屏 |
+| sora-video-landscape-15s | 15秒 | 横屏 |
+| sora-video-landscape-25s | 25秒 | 横屏 |
+| sora-video-portrait-10s | 10秒 | 竖屏 |
+| sora-video-portrait-15s | 15秒 | 竖屏 |
+| sora-video-portrait-25s | 25秒 | 竖屏 |
+
 ## API 端点
 
 | 端点 | 方法 | 描述 |

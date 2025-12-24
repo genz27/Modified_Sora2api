@@ -132,7 +132,7 @@ async def create_video(
     request: Request,
     prompt: str = Form(None, description="Video generation prompt (use @username to reference characters)"),
     model: str = Form("sora-video-10s", description="Model ID"),
-    seconds: Optional[str] = Form(None, description="Duration: '10' or '15'"),
+    seconds: Optional[str] = Form(None, description="Duration: '10', '15', or '25'"),
     orientation: Optional[str] = Form(None, description="Orientation: 'landscape' or 'portrait'"),
     style_id: Optional[str] = Form(None, description="Video style: festive, retro, news, selfie, handheld, anime, comic, golden, vintage"),
     input_reference: Optional[UploadFile] = File(None, description="Reference image file for image-to-video"),
@@ -168,7 +168,9 @@ async def create_video(
         if seconds or orientation:
             duration = seconds or "10"
             orient = orientation or "landscape"
-            if duration == "15":
+            if duration == "25":
+                final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-25s"
+            elif duration == "15":
                 final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-15s"
             else:
                 final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-10s"
@@ -233,7 +235,7 @@ async def test_create_video(
     request: Request,
     prompt: str = Form(None, description="Video generation prompt (use @username to reference characters)"),
     model: str = Form("sora-video-10s", description="Model ID"),
-    seconds: Optional[str] = Form(None, description="Duration: '10' or '15'"),
+    seconds: Optional[str] = Form(None, description="Duration: '10', '15', or '25'"),
     orientation: Optional[str] = Form(None, description="Orientation: 'landscape' or 'portrait'"),
     style_id: Optional[str] = Form(None, description="Video style: festive, retro, news, selfie, handheld, anime, comic, golden, vintage"),
     input_reference: Optional[UploadFile] = File(None, description="Reference image file for image-to-video"),
@@ -266,7 +268,9 @@ async def test_create_video(
         if seconds or orientation:
             duration = seconds or "10"
             orient = orientation or "landscape"
-            if duration == "15":
+            if duration == "25":
+                final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-25s"
+            elif duration == "15":
                 final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-15s"
             else:
                 final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-10s"
