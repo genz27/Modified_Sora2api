@@ -476,7 +476,17 @@ class SoraClient:
         return await self._make_request("GET", f"/project_y/profile/drafts?limit={limit}", token)
 
     async def get_pending_tasks(self, token: str) -> list:
-        """Get pending video generation tasks
+        """Get pending video generation tasks (v1)
+
+        Returns:
+            List of pending tasks with progress information
+        """
+        result = await self._make_request("GET", "/nf/pending", token)
+        # The API returns a list directly
+        return result if isinstance(result, list) else []
+
+    async def get_pending_tasks_v2(self, token: str) -> list:
+        """Get pending video generation tasks (v2)
 
         Returns:
             List of pending tasks with progress information
@@ -502,7 +512,7 @@ class SoraClient:
             - generations: list of generated videos
             Returns None if task not found
         """
-        pending_tasks = await self.get_pending_tasks(token)
+        pending_tasks = await self.get_pending_tasks_v2(token)
         for task in pending_tasks:
             if task.get("id") == task_id:
                 return task

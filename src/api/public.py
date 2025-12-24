@@ -401,7 +401,7 @@ async def get_token_pending_tasks(
     token_id: int,
     api_key: str = Depends(verify_api_key_header)
 ):
-    """Get pending video generation tasks for a specific token
+    """Get pending video generation tasks for a specific token (v1)
     
     Args:
         token_id: Token ID to query
@@ -426,6 +426,102 @@ async def get_token_pending_tasks(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get pending tasks: {str(e)}")
+
+
+@router.get("/v1/tokens/{token_id}/pending-tasks-v2")
+async def get_token_pending_tasks_v2(
+    token_id: int,
+    api_key: str = Depends(verify_api_key_header)
+):
+    """Get pending video generation tasks for a specific token (v2)
+    
+    Args:
+        token_id: Token ID to query
+    
+    Returns:
+        List of pending tasks with progress information (v2 format)
+    """
+    try:
+        token_obj = await token_manager.get_token_by_id(token_id)
+        if not token_obj:
+            raise HTTPException(status_code=404, detail="Token not found")
+        
+        tasks = await generation_handler.sora_client.get_pending_tasks_v2(token_obj.token)
+        
+        return {
+            "success": True,
+            "token_id": token_id,
+            "count": len(tasks),
+            "tasks": tasks
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get pending tasks v2: {str(e)}")
+
+
+@router.get("/v1/test/tokens/{token_id}/pending-tasks")
+async def test_get_token_pending_tasks(
+    token_id: int,
+    api_key: str = Depends(verify_api_key_header)
+):
+    """[TEST] Get pending video generation tasks for a specific token (v1)
+    
+    Args:
+        token_id: Token ID to query
+    
+    Returns:
+        List of pending tasks with progress information
+    """
+    try:
+        token_obj = await token_manager.get_token_by_id(token_id)
+        if not token_obj:
+            raise HTTPException(status_code=404, detail="Token not found")
+        
+        tasks = await generation_handler.sora_client.get_pending_tasks(token_obj.token)
+        
+        return {
+            "success": True,
+            "token_id": token_id,
+            "count": len(tasks),
+            "tasks": tasks
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get pending tasks: {str(e)}")
+
+
+@router.get("/v1/test/tokens/{token_id}/pending-tasks-v2")
+async def test_get_token_pending_tasks_v2(
+    token_id: int,
+    api_key: str = Depends(verify_api_key_header)
+):
+    """[TEST] Get pending video generation tasks for a specific token (v2)
+    
+    Args:
+        token_id: Token ID to query
+    
+    Returns:
+        List of pending tasks with progress information (v2 format)
+    """
+    try:
+        token_obj = await token_manager.get_token_by_id(token_id)
+        if not token_obj:
+            raise HTTPException(status_code=404, detail="Token not found")
+        
+        tasks = await generation_handler.sora_client.get_pending_tasks_v2(token_obj.token)
+        
+        return {
+            "success": True,
+            "token_id": token_id,
+            "count": len(tasks),
+            "tasks": tasks
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get pending tasks v2: {str(e)}")
 
 
 @router.get("/v1/tokens/{token_id}/tasks/{task_id}")
