@@ -146,8 +146,8 @@ async def startup_event():
     # Load Cloudflare Solver configuration from database
     await db.ensure_cloudflare_solver_config_row(config_dict)
     cloudflare_config = await db.get_cloudflare_solver_config()
-    config.set_cloudflare_solver_enabled(cloudflare_config.solver_enabled)
-    config.set_cloudflare_solver_api_url(cloudflare_config.solver_api_url)
+    config.set_cf_enabled(cloudflare_config.solver_enabled)
+    config.set_cf_api_url(cloudflare_config.solver_api_url)
 
     # Initialize concurrency manager with all tokens
     all_tokens = await db.get_all_tokens()
