@@ -769,22 +769,16 @@ async def refresh_cloudflare_credentials(token: str = Depends(verify_admin_token
     # 检查是否启用了 Cloudflare Solver
     if not config.cf_enabled:
         print("⚠️ [API] Solver未启用", flush=True)
-        return {
-            "success": False,
-            "message": "Cloudflare Solver 未启用，请先在配置中启用"
-        }
+        raise HTTPException(status_code=400, detail="Cloudflare Solver 未启用，请先在配置中启用")
     
     if not config.cf_api_url:
         print("⚠️ [API] Solver URL未配置", flush=True)
-        return {
-            "success": False,
-            "message": "Cloudflare Solver API 地址未配置"
-        }
+        raise HTTPException(status_code=400, detail="Cloudflare Solver API 地址未配置")
     
     try:
         print("🔄 [API] 开始调用 solve_cloudflare_challenge", flush=True)
         sys.stdout.flush()
-        result = await solve_cloudflare_challenge()
+        result = await solve_cloudflare_challenge(force_refresh=True)
         print(f"🔄 [API] solve_cloudflare_challenge 返回: {result is not None}", flush=True)
         sys.stdout.flush()
         if result:
@@ -805,19 +799,15 @@ async def refresh_cloudflare_credentials(token: str = Depends(verify_admin_token
             sys.stdout.flush()
             return response
         else:
-            return {
-                "success": False,
-                "message": "获取凭据失败，请检查 Solver 服务是否正常运行，或 API 地址是否正确"
-            }
+            raise HTTPException(status_code=500, detail="CF 凭据获取失败，请检查 Solver 服务")
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         print(f"❌ [API] 异常: {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
         sys.stdout.flush()
-        return {
-            "success": False,
-            "message": f"获取凭据失败: {str(e)}"
-        }
+        raise HTTPException(status_code=500, detail=f"获取凭据失败: {str(e)}")
 
 @router.post("/api/cloudflare/clear")
 async def clear_cloudflare_credentials(token: str = Depends(verify_admin_token)) -> dict:
