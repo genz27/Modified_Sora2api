@@ -47,14 +47,7 @@
                 <button onclick="switchTab('settings')" id="tabSettings" class="tab-btn border-b-2 border-transparent text-sm font-medium py-3 px-1">系统配置</button>
                 
                 <button onclick="switchTab('logs')" id="tabLogs" class="tab-btn border-b-2 border-transparent text-sm font-medium py-3 px-1">请求日志</button>
-                <a href="/static/generate.html" target="_blank" class="tab-btn border-b-2 border-transparent text-sm font-medium py-3 px-1 inline-flex items-center gap-1">
-                    生成面板
-                    <svg class="h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                        <polyline points="15 3 21 3 21 9"/>
-                        <line x1="10" y1="14" x2="21" y2="3"/>
-                    </svg>
-                </a>
+                <button onclick="switchTab('generate')" id="tabGenerate" class="tab-btn border-b-2 border-transparent text-sm font-medium py-3 px-1">生成面板</button>
             </nav>
         </div>
 
@@ -587,6 +580,11 @@
             </div>
         </div>
 
+        <!-- 生成面板（使用 iframe 嵌入 generate.html） -->
+        <div id="panelGenerate" class="hidden" style="background: #ffffff;">
+            <iframe id="generateFrame" src="/static/generate.html" class="w-full" style="border: 0; background: #ffffff; display:block; width:100%; height: 800px;" loading="lazy"></iframe>
+        </div>
+
         <!-- 页脚 -->
         <footer class="mt-12 pt-6 border-t border-border text-center text-xs text-muted-foreground">
             <p>© 2025 <a href="https://linux.do/u/thesmallhancat/summary" target="_blank" class="no-underline hover:underline" style="color: inherit;">TheSmallHanCat</a> && <a href="https://linux.do/u/tibbar/summary" target="_blank" class="no-underline hover:underline" style="color: inherit;">Tibbar</a>. All rights reserved.</p>
@@ -1042,7 +1040,7 @@
         refreshLogs=async()=>{await loadLogs()},
         showToast=(m,t='info')=>{const d=document.createElement('div'),bc={success:'bg-green-600',error:'bg-destructive',info:'bg-primary'};d.className=`fixed bottom-4 right-4 ${bc[t]||bc.info} text-white px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium z-50 animate-slide-up`;d.textContent=m;document.body.appendChild(d);setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.parentNode&&document.body.removeChild(d),300)},2000)},
         logout=()=>{if(!confirm('确定要退出登录吗?'))return;localStorage.removeItem('adminToken');location.href='/login'},
-        switchTab=t=>{const cap=n=>n.charAt(0).toUpperCase()+n.slice(1);['tokens','settings','logs'].forEach(n=>{const active=n===t;$(`panel${cap(n)}`).classList.toggle('hidden',!active);$(`tab${cap(n)}`).classList.toggle('border-primary',active);$(`tab${cap(n)}`).classList.toggle('text-primary',active);$(`tab${cap(n)}`).classList.toggle('border-transparent',!active);$(`tab${cap(n)}`).classList.toggle('text-muted-foreground',!active)});if(t==='settings'){loadAdminConfig();loadProxyConfig();loadProxyPool();loadWatermarkFreeConfig();loadCloudflareSolverConfig();loadCfState();loadCacheConfig();loadGenerationTimeout();loadATAutoRefreshConfig()}else if(t==='logs'){loadLogs()}else if(t==='webdav'){loadWebdavConfig();loadWebdavStats();refreshWebdavVideos();refreshUploadLogs()}},
+        switchTab=t=>{const cap=n=>n.charAt(0).toUpperCase()+n.slice(1);['tokens','settings','logs','generate'].forEach(n=>{const active=n===t;$(`panel${cap(n)}`).classList.toggle('hidden',!active);$(`tab${cap(n)}`).classList.toggle('border-primary',active);$(`tab${cap(n)}`).classList.toggle('text-primary',active);$(`tab${cap(n)}`).classList.toggle('border-transparent',!active);$(`tab${cap(n)}`).classList.toggle('text-muted-foreground',!active)});if(t==='settings'){loadAdminConfig();loadProxyConfig();loadProxyPool();loadWatermarkFreeConfig();loadCloudflareSolverConfig();loadCfState();loadCacheConfig();loadGenerationTimeout();loadATAutoRefreshConfig()}else if(t==='logs'){loadLogs()}else if(t==='webdav'){loadWebdavConfig();loadWebdavStats();refreshWebdavVideos();refreshUploadLogs()}},
         // WebDAV functions
         toggleWebdavOptions=()=>{const enabled=$('cfgWebdavEnabled').checked;$('webdavOptions').style.display=enabled?'block':'none'},
         loadWebdavConfig=async()=>{try{const r=await apiRequest('/api/webdav/config');if(!r)return;const d=await r.json();if(d.success&&d.config){$('cfgWebdavEnabled').checked=d.config.webdav_enabled||false;$('cfgWebdavUrl').value=d.config.webdav_url||'';$('cfgWebdavUsername').value=d.config.webdav_username||'';$('cfgWebdavPassword').value=d.config.webdav_password||'';$('cfgWebdavUploadPath').value=d.config.webdav_upload_path||'/video';$('cfgAutoDeleteEnabled').checked=d.config.auto_delete_enabled||false;$('cfgAutoDeleteDays').value=d.config.auto_delete_days||30;toggleWebdavOptions()}}catch(e){console.error('加载WebDAV配置失败:',e)}},
