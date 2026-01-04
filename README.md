@@ -23,6 +23,21 @@ Sora2API 是一个 OpenAI 兼容的 Sora API 服务，支持文生图、文生�
 - 无水印模式
 - 管理后台
 
+### 批量操作功能
+
+- 批量添加 Token（支持重复检测）
+- 批量测试 Token（自动启用/禁用）
+- 批量激活 Sora2（使用邀请码）
+- 批量启用/禁用 Token
+- 批量删除禁用 Token
+
+### 性能优化
+
+- 自适应轮询机制（根据进度动态调整间隔）
+- 停滞检测（避免无效请求）
+- 并发控制（批量操作限流）
+- Token 缓存（减少数据库查询）
+
 ---
 
 ## 快速开始
@@ -108,8 +123,9 @@ ip:port:user:pass
 ## API 文档
 
 详细 API 文档请参考：
-- [OpenAI 标准格式 API](docs/OPENAI_API.md)
-- [Sora API](docs/SORA_API.md)
+- [OpenAI 标准格式 API](docs/OPENAI_API.md) - 包含批量操作 API
+- [Sora API](docs/SORA_API.md) - 包含自适应轮询机制说明
+- [性能优化指南](docs/PERFORMANCE_OPTIMIZATION.md) - 性能优化配置
 
 ---
 

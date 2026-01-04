@@ -16,19 +16,25 @@ port = 8000
 
 [database]
 # 数据库类型: sqlite, mysql
+# sqlite: 单机部署，支持100-300并发
+# mysql: 分布式部署，支持500-1000+并发
 type = "sqlite"
-# SQLite 配置
+
+# SQLite 配置 (当 type = "sqlite" 时使用)
 sqlite_path = "data/hancat.db"
+
 # MySQL 配置 (当 type = "mysql" 时使用)
+# 需要先创建数据库: CREATE DATABASE sora2api CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 mysql_host = "localhost"
 mysql_port = 3306
 mysql_user = "root"
 mysql_password = ""
 mysql_database = "sora2api"
-mysql_pool_size = 10
+mysql_pool_size = 20
 
 [redis]
 # Redis 配置 (用于分布式锁和缓存)
+# 启用后支持多实例部署和更高并发
 enabled = false
 host = "localhost"
 port = 6379

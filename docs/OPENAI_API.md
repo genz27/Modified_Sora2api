@@ -24,6 +24,17 @@
 | `GET /v1/invite-codes` | 获取邀请码 |
 | `GET /v1/tokens/{token_id}/profile-feed` | Token 发布内容 |
 
+### 管理类 API (需要管理员认证)
+
+| 端点 | 功能 |
+|------|------|
+| `POST /api/tokens/batch-add` | 批量添加 Token |
+| `POST /api/tokens/batch-test` | 批量测试 Token |
+| `POST /api/tokens/batch-activate` | 批量激活 Sora2 |
+| `POST /api/tokens/batch-enable` | 批量启用 Token |
+| `POST /api/tokens/batch-disable` | 批量禁用 Token |
+| `DELETE /api/tokens/batch-delete-disabled` | 批量删除禁用 Token |
+
 所有端点都需要 API Key 认证。生成类 API 支持 `multipart/form-data` 和 `application/json` 两种请求格式。
 
 ## 认证
@@ -710,5 +721,221 @@ async function createCharacter(videoFile) {
   const result = await response.json();
   console.log("角色 ID:", result.data.cameo_id);
   return result;
+}
+```
+
+
+---
+
+## 管理类 API
+
+管理类 API 需要管理员认证，通过登录获取 admin token。
+
+### 认证
+
+```bash
+# 登录获取 admin token
+curl -X POST "http://localhost:8000/api/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin123"}'
+
+# 使用 admin token
+Authorization: Bearer admin-xxxxx
+```
+
+---
+
+### POST /api/tokens/batch-add
+
+批量添加多个 Token。
+
+**请求参数:**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:----:|------|
+| `tokens` | array | ✅ | Token 列表 |
+| `tokens[].token` | string | ✅ | Access Token |
+| `tokens[].st` | string | | Session Token |
+| `tokens[].rt` | string | | Refresh Token |
+| `tokens[].client_id` | string | | Client ID |
+| `tokens[].proxy_url` | string | | 代理 URL |
+| `tokens[].remark` | string | | 备注 |
+| `tokens[].image_enabled` | boolean | | 启用图片生成 (默认 true) |
+| `tokens[].video_enabled` | boolean | | 启用视频生成 (默认 true) |
+
+**请求示例:**
+
+```bash
+curl -X POST "http://localhost:8000/api/tokens/batch-add" \
+  -H "Authorization: Bearer admin-xxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokens": [
+      {"token": "eyJhbGciOiJSUzI1NiI...", "remark": "账号1"},
+      {"token": "eyJhbGciOiJSUzI1NiI...", "remark": "账号2"}
+    ]
+  }'
+```
+
+**响应示例:**
+
+```json
+{
+  "success": true,
+  "total": 2,
+  "added": 2,
+  "skipped": 0,
+  "failed": 0,
+  "details": [
+    {"token": "eyJhbGciOiJSUzI1...", "status": "added", "email": "user1@example.com"},
+    {"token": "eyJhbGciOiJSUzI1...", "status": "added", "email": "user2@example.com"}
+  ]
+}
+```
+
+---
+
+### POST /api/tokens/batch-test
+
+批量测试 Token 有效性。
+
+**查询参数:**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `only_active` | boolean | true | 仅测试已启用的 Token |
+| `only_disabled` | boolean | false | 仅测试已禁用的 Token |
+
+**请求示例:**
+
+```bash
+# 测试已启用的 Token (401 自动禁用)
+curl -X POST "http://localhost:8000/api/tokens/batch-test?only_active=true" \
+  -H "Authorization: Bearer admin-xxxxx"
+
+# 测试已禁用的 Token (有效自动启用)
+curl -X POST "http://localhost:8000/api/tokens/batch-test?only_disabled=true" \
+  -H "Authorization: Bearer admin-xxxxx"
+
+# 测试所有 Token
+curl -X POST "http://localhost:8000/api/tokens/batch-test?only_active=false&only_disabled=false" \
+  -H "Authorization: Bearer admin-xxxxx"
+```
+
+**响应示例:**
+
+```json
+{
+  "success": true,
+  "message": "测试完成: 8 有效, 2 无效, 1 已自动禁用, 0 已自动启用",
+  "total": 10,
+  "tested": 10,
+  "valid": 8,
+  "invalid": 2,
+  "auto_disabled": 1,
+  "auto_enabled": 0
+}
+```
+
+---
+
+### POST /api/tokens/batch-activate
+
+批量激活 Sora2 功能。
+
+**请求参数:**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:----:|------|
+| `invite_code` | string | ✅ | 6 位邀请码 |
+
+**请求示例:**
+
+```bash
+curl -X POST "http://localhost:8000/api/tokens/batch-activate" \
+  -H "Authorization: Bearer admin-xxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"invite_code": "ABC123"}'
+```
+
+**响应示例:**
+
+```json
+{
+  "success": true,
+  "message": "批量激活完成: 5 激活, 3 已激活, 2 失败",
+  "total": 10,
+  "activated": 5,
+  "already_active": 3,
+  "failed": 2
+}
+```
+
+---
+
+### POST /api/tokens/batch-enable
+
+批量启用所有禁用的 Token。
+
+**请求示例:**
+
+```bash
+curl -X POST "http://localhost:8000/api/tokens/batch-enable" \
+  -H "Authorization: Bearer admin-xxxxx"
+```
+
+**响应示例:**
+
+```json
+{
+  "success": true,
+  "message": "已启用 5 个账号",
+  "enabled_count": 5
+}
+```
+
+---
+
+### POST /api/tokens/batch-disable
+
+批量禁用所有启用的 Token。
+
+**请求示例:**
+
+```bash
+curl -X POST "http://localhost:8000/api/tokens/batch-disable" \
+  -H "Authorization: Bearer admin-xxxxx"
+```
+
+**响应示例:**
+
+```json
+{
+  "success": true,
+  "message": "已禁用 10 个账号",
+  "disabled_count": 10
+}
+```
+
+---
+
+### DELETE /api/tokens/batch-delete-disabled
+
+批量删除所有禁用的 Token。
+
+**请求示例:**
+
+```bash
+curl -X DELETE "http://localhost:8000/api/tokens/batch-delete-disabled" \
+  -H "Authorization: Bearer admin-xxxxx"
+```
+
+**响应示例:**
+
+```json
+{
+  "success": true,
+  "message": "已删除 3 个禁用账号",
+  "deleted_count": 3
 }
 ```

@@ -107,6 +107,24 @@ class ImportTokenItem(BaseModel):
 class ImportTokensRequest(BaseModel):
     tokens: List[ImportTokenItem]
 
+# Batch Add Token models
+class BatchAddTokenItem(BaseModel):
+    """Single token item for batch add operation"""
+    token: str  # Access Token (AT) - required
+    st: Optional[str] = None  # Session Token (ST)
+    rt: Optional[str] = None  # Refresh Token (RT)
+    client_id: Optional[str] = None  # Client ID
+    proxy_url: Optional[str] = None  # Proxy URL
+    remark: Optional[str] = None  # Remark
+    image_enabled: bool = True  # Enable image generation
+    video_enabled: bool = True  # Enable video generation
+    image_concurrency: int = -1  # Image concurrency limit
+    video_concurrency: int = -1  # Video concurrency limit
+
+class BatchAddTokensRequest(BaseModel):
+    """Request model for batch adding tokens"""
+    tokens: List[BatchAddTokenItem]
+
 class UpdateAdminConfigRequest(BaseModel):
     error_ban_threshold: int
 
@@ -369,6 +387,45 @@ async def delete_token(token_id: int, token: str = Depends(verify_admin_token)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.post("/api/tokens/batch-add")
+async def batch_add_tokens(
+    request: BatchAddTokensRequest,
+    token: str = Depends(verify_admin_token)
+):
+    """Batch add multiple tokens
+    
+    Adds multiple tokens at once with duplicate detection.
+    - Skips tokens that already exist (by email)
+    - Skips duplicate tokens within the same batch
+    - Continues processing remaining tokens if one fails
+    
+    **Validates: Requirements 2.1, 2.2, 2.3, 2.4**
+    """
+    try:
+        # Convert Pydantic models to dicts for the token manager
+        tokens_data = [item.model_dump() for item in request.tokens]
+        
+        result = await token_manager.batch_add_tokens(tokens_data)
+        
+        # Initialize concurrency counters for newly added tokens
+        if concurrency_manager:
+            for detail in result.get("details", []):
+                if detail.get("status") == "added" and detail.get("token_id"):
+                    token_item = next(
+                        (t for t in request.tokens if t.token[:20] == detail.get("token", "")[:20]),
+                        None
+                    )
+                    if token_item:
+                        await concurrency_manager.reset_token(
+                            detail["token_id"],
+                            image_concurrency=token_item.image_concurrency,
+                            video_concurrency=token_item.video_concurrency
+                        )
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"批量添加失败: {str(e)}")
+
 @router.post("/api/tokens/batch-test")
 async def batch_test_tokens(
     only_active: bool = True,
@@ -394,6 +451,45 @@ async def batch_test_tokens(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"批量测试失败: {str(e)}")
+
+
+class BatchActivateRequest(BaseModel):
+    """Request model for batch activating Sora2"""
+    invite_code: str
+
+
+@router.post("/api/tokens/batch-activate")
+async def batch_activate_sora2(
+    request: BatchActivateRequest,
+    token: str = Depends(verify_admin_token)
+):
+    """Batch activate Sora2 for tokens without Sora2 support
+    
+    Activates Sora2 for all active tokens that don't have Sora2 support.
+    - Filters tokens where sora2_supported is False or None
+    - Uses concurrency control (max 3 concurrent activations)
+    - Returns summary with activated/already-active/failed counts
+    
+    **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
+    """
+    try:
+        if not request.invite_code or len(request.invite_code) != 6:
+            raise HTTPException(status_code=400, detail="邀请码必须是6位")
+        
+        result = await token_manager.batch_activate_sora2(
+            invite_code=request.invite_code,
+            max_concurrency=3
+        )
+        
+        return {
+            "success": True,
+            "message": f"批量激活完成: {result['activated']} 激活, {result['already_active']} 已激活, {result['failed']} 失败",
+            **result
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"批量激活失败: {str(e)}")
 
 
 @router.post("/api/tokens/batch-enable")

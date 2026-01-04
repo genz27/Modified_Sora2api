@@ -20,3 +20,6 @@ redis==5.0.1
 # MySQL support
 aiomysql==0.2.0
 pymysql==1.1.0
+# Property-based testing
+hypothesis==6.100.0
+pytest==8.0.0

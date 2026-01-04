@@ -5,6 +5,7 @@ import base64
 import time
 import random
 import re
+from dataclasses import dataclass
 from typing import Optional, AsyncGenerator, Dict, Any
 from datetime import datetime
 from .sora_client import SoraClient
@@ -16,6 +17,112 @@ from ..core.database import Database
 from ..core.models import Task, RequestLog, CharacterOptions, Character
 from ..core.config import config
 from ..core.logger import debug_logger
+
+
+@dataclass
+class PollingConfig:
+    """Configuration for adaptive polling intervals
+    
+    Attributes:
+        low_progress_interval: Polling interval when progress < 30% (default: 5.0s)
+        mid_progress_interval: Polling interval when 30% <= progress < 70% (default: 3.0s)
+        high_progress_interval: Polling interval when progress >= 70% (default: 2.0s)
+        stall_threshold: Number of consecutive polls with no progress change before stall detection (default: 3)
+        stall_multiplier: Multiplier applied to interval when stall is detected (default: 1.5)
+        max_interval: Maximum polling interval cap (default: 10.0s)
+    """
+    low_progress_interval: float = 5.0   # progress < 30%
+    mid_progress_interval: float = 3.0   # 30% <= progress < 70%
+    high_progress_interval: float = 2.0  # progress >= 70%
+    stall_threshold: int = 3             # consecutive polls with no change
+    stall_multiplier: float = 1.5        # interval increase when stalled
+    max_interval: float = 10.0           # maximum polling interval
+
+
+class AdaptivePoller:
+    """Adaptive polling controller that adjusts polling intervals based on task progress
+    
+    This class implements an adaptive polling mechanism that:
+    1. Uses different polling intervals based on progress percentage
+    2. Detects stalls (no progress change) and increases interval accordingly
+    
+    Requirements:
+    - 1.1: Use adaptive polling intervals based on task progress
+    - 1.2: Use 5s interval when progress < 30%
+    - 1.3: Use 3s interval when 30% <= progress < 70%
+    - 1.4: Use 2s interval when progress >= 70%
+    - 1.5: Increase interval by 50% when no progress for 3 consecutive polls
+    """
+    
+    def __init__(self, config: Optional[PollingConfig] = None):
+        """Initialize the adaptive poller
+        
+        Args:
+            config: Optional polling configuration. Uses defaults if not provided.
+        """
+        self.config = config or PollingConfig()
+        self.last_progress: float = 0.0
+        self.no_change_count: int = 0
+        self.current_interval: float = self.config.low_progress_interval
+    
+    def get_interval(self, progress: float) -> float:
+        """Get the polling interval based on current progress
+        
+        Args:
+            progress: Current task progress (0-100)
+            
+        Returns:
+            Polling interval in seconds
+            
+        Requirements:
+        - 1.2: 5s when progress < 30%
+        - 1.3: 3s when 30% <= progress < 70%
+        - 1.4: 2s when progress >= 70%
+        """
+        if progress < 30:
+            base_interval = self.config.low_progress_interval
+        elif progress < 70:
+            base_interval = self.config.mid_progress_interval
+        else:
+            base_interval = self.config.high_progress_interval
+        
+        # Apply stall multiplier if stalled
+        if self.no_change_count >= self.config.stall_threshold:
+            # Calculate how many times we've exceeded the threshold
+            stall_factor = self.config.stall_multiplier
+            adjusted_interval = base_interval * stall_factor
+            return min(adjusted_interval, self.config.max_interval)
+        
+        return base_interval
+    
+    def record_progress(self, progress: float) -> None:
+        """Record progress and update stall detection state
+        
+        Args:
+            progress: Current task progress (0-100)
+            
+        Requirements:
+        - 1.5: Detect stall when no progress change for 3 consecutive polls
+        """
+        if progress == self.last_progress:
+            self.no_change_count += 1
+        else:
+            self.no_change_count = 0
+            self.last_progress = progress
+    
+    def reset(self) -> None:
+        """Reset the poller state for a new task"""
+        self.last_progress = 0.0
+        self.no_change_count = 0
+        self.current_interval = self.config.low_progress_interval
+    
+    def is_stalled(self) -> bool:
+        """Check if the task is currently considered stalled
+        
+        Returns:
+            True if no progress change detected for stall_threshold consecutive polls
+        """
+        return self.no_change_count >= self.config.stall_threshold
 
 # Model configuration
 MODEL_CONFIG = {
@@ -524,11 +631,23 @@ class GenerationHandler:
         
         Args:
             use_pending_v1: If True, use /nf/pending (v1) for polling instead of /nf/pending/v2
+            
+        This method uses adaptive polling intervals based on task progress:
+        - 5s when progress < 30%
+        - 3s when 30% <= progress < 70%
+        - 2s when progress >= 70%
+        - Interval increases by 50% when no progress change for 3 consecutive polls
+        
+        Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
         """
         # Get timeout from config
         timeout = config.video_timeout if is_video else config.image_timeout
-        poll_interval = config.poll_interval
-        max_attempts = int(timeout / poll_interval)  # Calculate max attempts based on timeout
+        
+        # Initialize adaptive poller for video generation
+        # For image generation, we use a simpler approach since progress updates are less frequent
+        adaptive_poller = AdaptivePoller() if is_video else None
+        base_poll_interval = config.poll_interval  # Fallback for image generation
+        
         last_progress = 0
         start_time = time.time()
         last_heartbeat_time = start_time  # Track last heartbeat for image generation
@@ -537,14 +656,14 @@ class GenerationHandler:
         video_status_interval = 30  # Output status every 30 seconds for video generation
         post_link_emitted = False
 
-        debug_logger.log_info(f"Starting task polling: task_id={task_id}, is_video={is_video}, timeout={timeout}s, max_attempts={max_attempts}")
+        debug_logger.log_info(f"Starting task polling: task_id={task_id}, is_video={is_video}, timeout={timeout}s, adaptive_polling={'enabled' if is_video else 'disabled'}")
 
         # Check and log watermark-free mode status at the beginning
         if is_video:
             watermark_free_config = await self.db.get_watermark_free_config()
             debug_logger.log_info(f"Watermark-free mode: {'ENABLED' if watermark_free_config.watermark_free_enabled else 'DISABLED'}")
 
-        for attempt in range(max_attempts):
+        while True:
             # Check if timeout exceeded
             elapsed_time = time.time() - start_time
             if elapsed_time > timeout:
@@ -570,6 +689,13 @@ class GenerationHandler:
                 await self.db.update_task(task_id, "failed", 0, error_message=f"Generation timeout after {elapsed_time:.1f} seconds")
                 raise Exception(f"Upstream API timeout: Generation exceeded {timeout} seconds limit")
 
+            # Get adaptive polling interval for video, or use base interval for image
+            if is_video and adaptive_poller:
+                poll_interval = adaptive_poller.get_interval(last_progress)
+                if adaptive_poller.is_stalled():
+                    debug_logger.log_info(f"Task {task_id} stall detected, using extended interval: {poll_interval}s")
+            else:
+                poll_interval = base_poll_interval
 
             await asyncio.sleep(poll_interval)
 
@@ -594,15 +720,24 @@ class GenerationHandler:
                             else:
                                 progress_pct = int(progress_pct * 100)
 
-                            # Update last_progress for tracking
-                            last_progress = progress_pct
                             status = task.get("status", "processing")
+                            
+                            # Record progress for adaptive polling (stall detection)
+                            # Requirements: 1.5 - detect stall when no progress for 3 consecutive polls
+                            if adaptive_poller:
+                                adaptive_poller.record_progress(progress_pct)
 
-                            # Output status every 30 seconds (not just when progress changes)
+                            # Output progress when it changes (at least 1% difference) or every 30 seconds
                             current_time = time.time()
-                            if stream and (current_time - last_status_output_time >= video_status_interval):
+                            progress_changed = progress_pct > last_progress
+                            time_elapsed = current_time - last_status_output_time >= video_status_interval
+                            
+                            if stream and (progress_changed or time_elapsed):
                                 last_status_output_time = current_time
-                                debug_logger.log_info(f"Task {task_id} progress: {progress_pct}% (status: {status})")
+                                last_progress = progress_pct
+                                # Include adaptive polling info in debug log
+                                interval_info = f", next_interval={adaptive_poller.get_interval(progress_pct)}s" if adaptive_poller else ""
+                                debug_logger.log_info(f"Task {task_id} progress: {progress_pct}% (status: {status}{interval_info})")
                                 yield self._format_stream_chunk(
                                     reasoning_content=f"Video generation progress: {progress_pct}%",
                                     stage="generation",
@@ -1035,36 +1170,27 @@ class GenerationHandler:
                             )
 
                 # Progress update for stream mode (fallback if no status from API)
-                if stream and attempt % 10 == 0:  # Update every 10 attempts (roughly 20% intervals)
-                    estimated_progress = min(90, (attempt / max_attempts) * 100)
-                    if estimated_progress > last_progress + 20:  # Update every 20%
-                        last_progress = estimated_progress
-                        yield self._format_stream_chunk(
-                            reasoning_content=f"Generation in progress: {estimated_progress:.0f}% completed (estimated)...",
-                            stage="generation",
-                            status="processing",
-                            progress=estimated_progress,
-                            details={"estimated": True}
-                        )
+                # Note: With adaptive polling, we rely on actual progress updates rather than attempt counts
             
             except Exception as e:
-                if attempt >= max_attempts - 1:
-                    raise e
+                # Log the error but continue polling (timeout check at loop start will handle termination)
+                debug_logger.log_info(f"Polling error for task {task_id}: {str(e)}, continuing...")
                 continue
 
-        # Timeout - release lock if image generation
+        # This point should not be reached due to timeout check at loop start
+        # But keep as safety net
         if not is_video and token_id:
             await self.load_balancer.token_lock.release_lock(token_id)
-            debug_logger.log_info(f"Released lock for token {token_id} due to max attempts reached")
+            debug_logger.log_info(f"Released lock for token {token_id} due to unexpected loop exit")
             # Release concurrency slot for image generation
             if self.concurrency_manager:
                 await self.concurrency_manager.release_image(token_id)
-                debug_logger.log_info(f"Released concurrency slot for token {token_id} due to max attempts reached")
+                debug_logger.log_info(f"Released concurrency slot for token {token_id} due to unexpected loop exit")
 
         # Release concurrency slot for video generation
         if is_video and token_id and self.concurrency_manager:
             await self.concurrency_manager.release_video(token_id)
-            debug_logger.log_info(f"Released concurrency slot for token {token_id} due to max attempts reached")
+            debug_logger.log_info(f"Released concurrency slot for token {token_id} due to unexpected loop exit")
 
         await self.db.update_task(task_id, "failed", 0, error_message=f"Generation timeout after {timeout} seconds")
         raise Exception(f"Upstream API timeout: Generation exceeded {timeout} seconds limit")

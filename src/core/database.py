@@ -8,69 +8,156 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from .models import Token, TokenStats, Task, RequestLog, AdminConfig, ProxyConfig, WatermarkFreeConfig, CacheConfig, GenerationConfig, TokenRefreshConfig, CloudflareSolverConfig, Character, WebDAVConfig, VideoRecord, UploadLog
 from .db_pool import get_db_connection
+from .config import config
 
 class Database:
-    """SQLite database manager with WAL mode and retry logic"""
+    """Database manager with support for SQLite and MySQL"""
 
     def __init__(self, db_path: str = None):
-        if db_path is None:
-            # Store database in data directory
-            data_dir = Path(__file__).parent.parent.parent / "data"
-            data_dir.mkdir(exist_ok=True)
-            db_path = str(data_dir / "hancat.db")
-        self.db_path = db_path
+        # Determine database type from config
+        self.db_type = config.db_type.lower()
+        
+        if self.db_type == "mysql":
+            self.db_path = None
+            self._mysql_pool = None
+        else:
+            # SQLite
+            if db_path is None:
+                data_dir = Path(__file__).parent.parent.parent / "data"
+                data_dir.mkdir(exist_ok=True)
+                # Use config path or default
+                sqlite_path = config.sqlite_path if config.sqlite_path else "hancat.db"
+                # If path is relative, make it relative to project root
+                if not Path(sqlite_path).is_absolute():
+                    db_path = str(Path(__file__).parent.parent.parent / sqlite_path)
+                else:
+                    db_path = sqlite_path
+            self.db_path = db_path
+        
         self._write_lock = asyncio.Lock()  # 写操作锁
 
     def db_exists(self) -> bool:
-        """Check if database file exists"""
+        """Check if database file exists (SQLite only)"""
+        if self.db_type == "mysql":
+            return True  # MySQL database should be created externally
         return Path(self.db_path).exists()
+
+    async def _get_mysql_pool(self):
+        """Get or create MySQL connection pool"""
+        if self._mysql_pool is None:
+            import aiomysql
+            self._mysql_pool = await aiomysql.create_pool(
+                host=config.mysql_host,
+                port=config.mysql_port,
+                user=config.mysql_user,
+                password=config.mysql_password,
+                db=config.mysql_database,
+                minsize=5,
+                maxsize=config.mysql_pool_size,
+                autocommit=False,
+                charset='utf8mb4',
+                cursorclass=aiomysql.DictCursor,
+                connect_timeout=60
+            )
+            print(f"✅ MySQL pool initialized (host: {config.mysql_host}, pool_size: {config.mysql_pool_size})")
+        return self._mysql_pool
 
     @asynccontextmanager
     async def _connect(self, readonly: bool = False):
-        """Get a database connection with proper settings (context manager)
-        
-        高并发优化设置：
-        - WAL 模式：读写分离
-        - 60秒超时和锁等待
-        - 64MB 缓存
-        - 256MB 内存映射
-        """
-        conn = await aiosqlite.connect(
-            self.db_path,
-            timeout=60.0
-        )
-        try:
-            # 高并发优化 PRAGMA 设置
+        """Get a database connection with proper settings (context manager)"""
+        if self.db_type == "mysql":
+            import aiomysql
+            pool = await self._get_mysql_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cursor:
+                    yield _MySQLConnectionWrapper(conn, cursor)
+        else:
+            # SQLite with high concurrency optimizations
+            conn = await aiosqlite.connect(self.db_path, timeout=60.0)
+            try:
+                await conn.execute("PRAGMA journal_mode=WAL")
+                await conn.execute("PRAGMA synchronous=NORMAL")
+                await conn.execute("PRAGMA busy_timeout=60000")
+                await conn.execute("PRAGMA cache_size=-64000")
+                await conn.execute("PRAGMA mmap_size=268435456")
+                await conn.execute("PRAGMA temp_store=MEMORY")
+                if readonly:
+                    await conn.execute("PRAGMA query_only=ON")
+                conn.row_factory = aiosqlite.Row
+                yield conn
+            finally:
+                await conn.close()
+
+    async def _get_connection(self, readonly: bool = False):
+        """Get a database connection with proper settings (non-context manager)"""
+        if self.db_type == "mysql":
+            import aiomysql
+            pool = await self._get_mysql_pool()
+            conn = await pool.acquire()
+            return _MySQLConnectionWrapper(conn, await conn.cursor(aiomysql.DictCursor), pool=pool)
+        else:
+            conn = await aiosqlite.connect(self.db_path, timeout=60.0)
             await conn.execute("PRAGMA journal_mode=WAL")
             await conn.execute("PRAGMA synchronous=NORMAL")
-            await conn.execute("PRAGMA busy_timeout=60000")  # 60秒等待锁
-            await conn.execute("PRAGMA cache_size=-64000")  # 64MB 缓存
-            await conn.execute("PRAGMA mmap_size=268435456")  # 256MB 内存映射
+            await conn.execute("PRAGMA busy_timeout=60000")
+            await conn.execute("PRAGMA cache_size=-64000")
+            await conn.execute("PRAGMA mmap_size=268435456")
             await conn.execute("PRAGMA temp_store=MEMORY")
             if readonly:
                 await conn.execute("PRAGMA query_only=ON")
             conn.row_factory = aiosqlite.Row
-            yield conn
-        finally:
-            await conn.close()
+            return conn
 
-    async def _get_connection(self, readonly: bool = False):
-        """Get a database connection with proper settings (non-context manager)"""
-        conn = await aiosqlite.connect(
-            self.db_path,
-            timeout=60.0
-        )
-        # 高并发优化 PRAGMA 设置
-        await conn.execute("PRAGMA journal_mode=WAL")
-        await conn.execute("PRAGMA synchronous=NORMAL")
-        await conn.execute("PRAGMA busy_timeout=60000")
-        await conn.execute("PRAGMA cache_size=-64000")
-        await conn.execute("PRAGMA mmap_size=268435456")
-        await conn.execute("PRAGMA temp_store=MEMORY")
-        if readonly:
-            await conn.execute("PRAGMA query_only=ON")
-        conn.row_factory = aiosqlite.Row
-        return conn
+
+class _MySQLConnectionWrapper:
+    """Wrapper to make MySQL cursor behave like SQLite connection"""
+    
+    def __init__(self, conn, cursor, pool=None):
+        self._conn = conn
+        self._cursor = cursor
+        self._pool = pool
+        self.row_factory = None
+    
+    async def execute(self, sql: str, params: tuple = None):
+        # Convert SQLite placeholders to MySQL
+        sql = sql.replace("?", "%s")
+        # Handle SQLite-specific syntax
+        sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "INT AUTO_INCREMENT PRIMARY KEY")
+        sql = sql.replace("AUTOINCREMENT", "AUTO_INCREMENT")
+        sql = sql.replace("INSERT OR IGNORE", "INSERT IGNORE")
+        
+        if params:
+            await self._cursor.execute(sql, params)
+        else:
+            await self._cursor.execute(sql)
+        return self._cursor
+    
+    async def executemany(self, sql: str, params_list: list):
+        sql = sql.replace("?", "%s")
+        await self._cursor.executemany(sql, params_list)
+    
+    async def commit(self):
+        await self._conn.commit()
+    
+    async def close(self):
+        await self._cursor.close()
+        if self._pool:
+            self._pool.release(self._conn)
+        else:
+            self._conn.close()
+    
+    async def fetchone(self):
+        return await self._cursor.fetchone()
+    
+    async def fetchall(self):
+        return await self._cursor.fetchall()
+    
+    @property
+    def lastrowid(self):
+        return self._cursor.lastrowid
+
+
+# Continue with the rest of the Database class methods...
 
     async def _execute_with_retry(self, operation, max_retries: int = 5):
         """Execute database operation with retry logic for locked database
@@ -97,19 +184,33 @@ class Database:
 
     async def _table_exists(self, db, table_name: str) -> bool:
         """Check if a table exists in the database"""
-        cursor = await db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (table_name,)
-        )
+        if self.db_type == "mysql":
+            cursor = await db.execute(
+                "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
+                (config.mysql_database, table_name)
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,)
+            )
         result = await cursor.fetchone()
         return result is not None
 
     async def _column_exists(self, db, table_name: str, column_name: str) -> bool:
         """Check if a column exists in a table"""
         try:
-            cursor = await db.execute(f"PRAGMA table_info({table_name})")
-            columns = await cursor.fetchall()
-            return any(col[1] == column_name for col in columns)
+            if self.db_type == "mysql":
+                cursor = await db.execute(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s",
+                    (config.mysql_database, table_name, column_name)
+                )
+                result = await cursor.fetchone()
+                return result is not None
+            else:
+                cursor = await db.execute(f"PRAGMA table_info({table_name})")
+                columns = await cursor.fetchall()
+                return any(col[1] == column_name for col in columns)
         except:
             return False
 

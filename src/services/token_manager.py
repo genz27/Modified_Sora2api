@@ -1284,6 +1284,155 @@ class TokenManager:
             "results": results
         }
 
+    async def batch_add_tokens(self, tokens: List[dict]) -> dict:
+        """Batch add multiple tokens with duplicate detection
+        
+        Args:
+            tokens: List of token dicts, each containing:
+                - token: Access Token (required)
+                - st: Session Token (optional)
+                - rt: Refresh Token (optional)
+                - client_id: Client ID (optional)
+                - proxy_url: Proxy URL (optional)
+                - remark: Remark (optional)
+                - image_enabled: Enable image generation (default: True)
+                - video_enabled: Enable video generation (default: True)
+                - image_concurrency: Image concurrency limit (default: -1)
+                - video_concurrency: Video concurrency limit (default: -1)
+        
+        Returns:
+            {
+                "success": True,
+                "total": 10,
+                "added": 8,
+                "skipped": 1,
+                "failed": 1,
+                "details": [...]
+            }
+        
+        **Validates: Requirements 2.1, 2.2, 2.3, 2.4**
+        """
+        added_count = 0
+        skipped_count = 0
+        failed_count = 0
+        details = []
+        
+        # Track emails we've seen in this batch to detect duplicates within the batch
+        seen_emails = set()
+        
+        for token_item in tokens:
+            token_value = token_item.get("token", "")
+            st = token_item.get("st")
+            rt = token_item.get("rt")
+            client_id = token_item.get("client_id")
+            proxy_url = token_item.get("proxy_url")
+            remark = token_item.get("remark")
+            image_enabled = token_item.get("image_enabled", True)
+            video_enabled = token_item.get("video_enabled", True)
+            image_concurrency = token_item.get("image_concurrency", -1)
+            video_concurrency = token_item.get("video_concurrency", -1)
+            
+            detail = {
+                "token": token_value[:20] + "..." if len(token_value) > 20 else token_value,
+                "status": None,
+                "message": None,
+                "email": None
+            }
+            
+            try:
+                # Validate token is not empty
+                if not token_value or not token_value.strip():
+                    detail["status"] = "failed"
+                    detail["message"] = "Token is empty"
+                    failed_count += 1
+                    details.append(detail)
+                    continue
+                
+                # Decode JWT to get email for duplicate detection
+                try:
+                    decoded = await self.decode_jwt(token_value)
+                    jwt_email = None
+                    if "https://api.openai.com/profile" in decoded:
+                        jwt_email = decoded["https://api.openai.com/profile"].get("email")
+                    
+                    if jwt_email:
+                        detail["email"] = jwt_email
+                        
+                        # Check for duplicate within this batch
+                        if jwt_email in seen_emails:
+                            detail["status"] = "skipped"
+                            detail["message"] = f"Duplicate email in batch: {jwt_email}"
+                            skipped_count += 1
+                            details.append(detail)
+                            continue
+                        
+                        # Check for existing token in database
+                        existing_token = await self.db.get_token_by_email(jwt_email)
+                        if existing_token:
+                            detail["status"] = "skipped"
+                            detail["message"] = f"Token already exists for email: {jwt_email}"
+                            skipped_count += 1
+                            seen_emails.add(jwt_email)
+                            details.append(detail)
+                            continue
+                        
+                        seen_emails.add(jwt_email)
+                except Exception as e:
+                    # If JWT decode fails, continue with add_token which will handle validation
+                    pass
+                
+                # Add the token
+                new_token = await self.add_token(
+                    token_value=token_value,
+                    st=st,
+                    rt=rt,
+                    client_id=client_id,
+                    proxy_url=proxy_url,
+                    remark=remark,
+                    update_if_exists=False,
+                    image_enabled=image_enabled,
+                    video_enabled=video_enabled,
+                    image_concurrency=image_concurrency,
+                    video_concurrency=video_concurrency
+                )
+                
+                detail["status"] = "added"
+                detail["message"] = f"Token added successfully"
+                detail["email"] = new_token.email
+                detail["token_id"] = new_token.id
+                added_count += 1
+                
+                # Add delay between tokens to avoid rate limiting
+                await asyncio.sleep(0.5)
+                
+            except ValueError as e:
+                # Token already exists or validation error
+                error_msg = str(e)
+                if "已存在" in error_msg or "already exists" in error_msg.lower():
+                    detail["status"] = "skipped"
+                    detail["message"] = error_msg
+                    skipped_count += 1
+                else:
+                    detail["status"] = "failed"
+                    detail["message"] = error_msg
+                    failed_count += 1
+            except Exception as e:
+                detail["status"] = "failed"
+                detail["message"] = str(e)
+                failed_count += 1
+            
+            details.append(detail)
+        
+        return {
+            "success": True,
+            "total": len(tokens),
+            "added": added_count,
+            "skipped": skipped_count,
+            "failed": failed_count,
+            "details": details,
+            "message": f"批量添加完成: {added_count} 添加, {skipped_count} 跳过, {failed_count} 失败"
+        }
+
     async def auto_refresh_expiring_token(self, token_id: int) -> bool:
         """
         Auto refresh token when expiry time is within 24 hours using ST or RT
@@ -1393,3 +1542,113 @@ class TokenManager:
         except Exception as e:
             debug_logger.log_info(f"[AUTO_REFRESH] 🔴 Token {token_id}: 自动刷新异常 - {str(e)}")
             return False
+
+    async def batch_activate_sora2(self, invite_code: str, max_concurrency: int = 3) -> dict:
+        """Batch activate Sora2 for tokens that don't have Sora2 support
+        
+        Args:
+            invite_code: The Sora2 invite code to use for activation
+            max_concurrency: Maximum concurrent activations (default: 3)
+        
+        Returns:
+            {
+                "success": True,
+                "total": 10,
+                "activated": 5,
+                "already_active": 3,
+                "failed": 2,
+                "details": [...]
+            }
+        
+        **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
+        """
+        # Filter tokens without Sora2 support (sora2_supported is False or None)
+        all_tokens = await self.db.get_all_tokens()
+        tokens_to_activate = [
+            t for t in all_tokens 
+            if t.is_active and (t.sora2_supported is False or t.sora2_supported is None)
+        ]
+        
+        activated_count = 0
+        already_active_count = 0
+        failed_count = 0
+        details = []
+        
+        # Use semaphore for concurrency control
+        semaphore = asyncio.Semaphore(max_concurrency)
+        results_lock = asyncio.Lock()
+        
+        async def activate_single_token(token):
+            nonlocal activated_count, already_active_count, failed_count
+            
+            async with semaphore:
+                # Add delay between activations to avoid rate limiting
+                await asyncio.sleep(0.5)
+                
+                detail = {
+                    "token_id": token.id,
+                    "email": token.email,
+                    "status": None,
+                    "message": None
+                }
+                
+                try:
+                    # Try to activate Sora2 with the invite code
+                    result = await self.activate_sora2_invite(token.token, invite_code)
+                    
+                    async with results_lock:
+                        if result.get("success"):
+                            if result.get("already_accepted"):
+                                detail["status"] = "already_active"
+                                detail["message"] = "Sora2 already activated"
+                                already_active_count += 1
+                            else:
+                                detail["status"] = "activated"
+                                detail["message"] = "Sora2 activated successfully"
+                                activated_count += 1
+                                
+                                # Update token Sora2 info in database
+                                try:
+                                    # Refresh Sora2 info after activation
+                                    sora2_info = await self.get_sora2_invite_code(token.token)
+                                    await self.db.update_token_sora2(
+                                        token.id,
+                                        supported=sora2_info.get("supported", True),
+                                        invite_code=sora2_info.get("invite_code"),
+                                        redeemed_count=sora2_info.get("redeemed_count", 0),
+                                        total_count=sora2_info.get("total_count", 0),
+                                        remaining_count=0
+                                    )
+                                except Exception as e:
+                                    print(f"Failed to update Sora2 info for token {token.id}: {e}")
+                        else:
+                            detail["status"] = "failed"
+                            detail["message"] = "Activation returned unsuccessful"
+                            failed_count += 1
+                            
+                except Exception as e:
+                    error_msg = str(e)
+                    async with results_lock:
+                        detail["status"] = "failed"
+                        detail["message"] = error_msg
+                        failed_count += 1
+                
+                async with results_lock:
+                    details.append(detail)
+        
+        # Execute all activations concurrently with semaphore control
+        tasks = [activate_single_token(token) for token in tokens_to_activate]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Invalidate cache after batch operation
+        self._token_cache.invalidate()
+        
+        return {
+            "success": True,
+            "total": len(tokens_to_activate),
+            "activated": activated_count,
+            "already_active": already_active_count,
+            "failed": failed_count,
+            "details": details,
+            "message": f"批量激活完成: {activated_count} 激活, {already_active_count} 已激活, {failed_count} 失败"
+        }

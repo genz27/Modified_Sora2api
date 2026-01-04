@@ -2,6 +2,29 @@
 
 支持 OpenAI Sora 官方 API 格式的视频生成接口。
 
+## 自适应轮询机制
+
+Sora2API 实现了智能的自适应轮询机制，根据视频生成进度动态调整轮询间隔：
+
+| 进度范围 | 轮询间隔 | 说明 |
+|----------|----------|------|
+| 0% - 30% | 5 秒 | 初始阶段，进度较慢 |
+| 30% - 70% | 3 秒 | 中间阶段，进度加快 |
+| 70% - 100% | 2 秒 | 最终阶段，即将完成 |
+
+### 停滞检测
+
+系统会自动检测生成停滞情况：
+- 当连续 3 次轮询进度无变化时，自动增加轮询间隔
+- 每次停滞检测后，间隔增加 2 秒
+- 最大轮询间隔限制为 10 秒
+- 当进度恢复变化时，自动重置为正常间隔
+
+这种机制可以：
+- 减少不必要的 API 请求
+- 在进度快速变化时及时获取更新
+- 在停滞时避免频繁无效请求
+
 ## 可用模型
 
 | 模型 ID | 时长 | 方向 |
@@ -23,6 +46,8 @@
 | `/v1/videos` | POST | 创建视频生成任务 |
 | `/v1/videos/{video_id}` | GET | 查询视频任务状态 |
 | `/v1/videos/{video_id}/content` | GET | 下载视频内容 |
+| `/v1/chat/completions` | POST | 聊天补全接口（统一端点） |
+| `/v1/models` | GET | 列出可用模型 |
 
 ---
 
@@ -37,66 +62,102 @@
 | 参数 | 类型 | 必填 | 描述 |
 |------|------|------|------|
 | Authorization | string | 是 | Bearer token (Bearer sk-xxxx) |
-| Content-Type | string | 是 | multipart/form-data |
+| Content-Type | string | 是 | multipart/form-data 或 application/json |
 
-#### 请求参数 (multipart/form-data)
+#### 请求参数
 
 | 参数 | 类型 | 必填 | 描述 |
 |------|------|------|------|
 | prompt | string | 是 | 视频描述提示词 |
-| model | string | 否 | 模型名称，默认 `sora-2` |
-| seconds | string | 否 | 视频时长（秒），默认 `4` |
-| size | string | 否 | 分辨率，默认 `720x1280` |
-| input_reference | file | 否 | 参考图片文件（图生视频） |
+| model | string | 否 | 模型名称，默认 `sora-video-landscape-10s`，支持 `sora-2` |
+| seconds | string | 否 | 视频时长：`10`、`15` 或 `25`，默认 `10` |
+| size | string | 否 | 分辨率，如 `1920x1080`、`1080x1920` |
+| orientation | string | 否 | 方向：`landscape` 或 `portrait` |
+| style_id | string | 否 | 视频风格：festive, retro, news, selfie, handheld, anime, comic, golden, vintage |
+| input_reference | file | 否 | 参考图片文件（图生视频，仅 multipart/form-data） |
+| input_image | string | 否 | Base64 编码的参考图片 |
+| remix_target_id | string | 否 | 混剪源视频ID（如 `s_xxx`） |
+| async_mode | boolean | 否 | 异步模式，默认 `false`。设为 `true` 时立即返回任务ID |
 | metadata | string | 否 | 扩展参数（JSON字符串） |
 
-#### 请求示例
+#### 同步模式（默认）
 
-**文生视频：**
+等待视频生成完成后返回结果。
+
+**请求示例：**
 
 ```bash
+# 文生视频
 curl -X POST "http://localhost:8000/v1/videos" \
   -H "Authorization: Bearer sk-xxxx" \
-  -F "prompt=一只可爱的猫咪在花园里玩耍，阳光明媚" \
-  -F "model=sora-2" \
-  -F "seconds=5" \
-  -F "size=1920x1080"
-```
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "一只可爱的猫咪在花园里玩耍，阳光明媚",
+    "model": "sora-2",
+    "seconds": "10",
+    "size": "1920x1080"
+  }'
 
-**图生视频：**
-
-```bash
+# 图生视频（multipart/form-data）
 curl -X POST "http://localhost:8000/v1/videos" \
   -H "Authorization: Bearer sk-xxxx" \
   -F "prompt=让图片中的猫咪慢慢睁开眼睛" \
   -F "model=sora-2" \
-  -F "seconds=5" \
-  -F "size=1920x1080" \
+  -F "seconds=10" \
   -F "input_reference=@/path/to/cat.jpg"
 ```
 
-**带扩展参数：**
+**响应示例 (201 Created)：**
+
+```json
+{
+  "id": "video_a1b2c3d4e5f6g7h8i9j0k1l2",
+  "object": "video",
+  "model": "sora-2",
+  "created_at": 1703145600,
+  "status": "succeeded",
+  "progress": 100,
+  "expires_at": 1703232000,
+  "size": "1920x1080",
+  "seconds": "10",
+  "quality": "standard",
+  "url": "https://videos.sora.com/xxx/video.mp4",
+  "permalink": "https://sora.chatgpt.com/p/s_xxx"
+}
+```
+
+#### 异步模式
+
+设置 `async_mode=true` 时，立即返回任务ID，通过轮询查询状态。
+
+**请求示例：**
 
 ```bash
 curl -X POST "http://localhost:8000/v1/videos" \
   -H "Authorization: Bearer sk-xxxx" \
-  -F "prompt=一只猫咪在奔跑" \
-  -F "model=sora-2" \
-  -F "seconds=10" \
-  -F "size=1920x1080" \
-  -F 'metadata={"style_id":"anime"}'
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "一只猫咪在草地上奔跑",
+    "model": "sora-2",
+    "seconds": "10",
+    "async_mode": true
+  }'
 ```
 
-#### 响应示例 (201 Created)
+**响应示例 (201 Created)：**
 
 ```json
 {
-  "id": "video_a1b2c3d4e5f6",
+  "id": "video_a1b2c3d4e5f6g7h8i9j0k1l2",
   "object": "video",
   "model": "sora-2",
   "created_at": 1703145600,
   "status": "processing",
-  "progress": 0
+  "progress": 0,
+  "expires_at": 1703232000,
+  "size": "1920x1080",
+  "seconds": "10",
+  "quality": "standard"
 }
 ```
 
@@ -117,7 +178,7 @@ curl -X POST "http://localhost:8000/v1/videos" \
 #### 请求示例
 
 ```bash
-curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6" \
+curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6g7h8i9j0k1l2" \
   -H "Authorization: Bearer sk-xxxx"
 ```
 
@@ -125,15 +186,15 @@ curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6" \
 
 ```json
 {
-  "id": "video_a1b2c3d4e5f6",
+  "id": "video_a1b2c3d4e5f6g7h8i9j0k1l2",
   "object": "video",
-  "model": "sora-2",
+  "model": "sora-video-landscape-10s",
   "created_at": 1703145600,
   "status": "processing",
   "progress": 45,
   "expires_at": 1703232000,
   "size": "1920x1080",
-  "seconds": "5",
+  "seconds": "10",
   "quality": "standard",
   "remixed_from_video_id": null,
   "error": null
@@ -144,15 +205,15 @@ curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6" \
 
 ```json
 {
-  "id": "video_a1b2c3d4e5f6",
+  "id": "video_a1b2c3d4e5f6g7h8i9j0k1l2",
   "object": "video",
-  "model": "sora-2",
+  "model": "sora-video-landscape-10s",
   "created_at": 1703145600,
   "status": "succeeded",
   "progress": 100,
   "expires_at": 1703232000,
   "size": "1920x1080",
-  "seconds": "5",
+  "seconds": "10",
   "quality": "standard",
   "url": "https://videos.sora.com/xxx/video.mp4",
   "remixed_from_video_id": null,
@@ -164,20 +225,20 @@ curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6" \
 
 ```json
 {
-  "id": "video_a1b2c3d4e5f6",
+  "id": "video_a1b2c3d4e5f6g7h8i9j0k1l2",
   "object": "video",
-  "model": "sora-2",
+  "model": "sora-video-landscape-10s",
   "created_at": 1703145600,
   "status": "failed",
   "progress": 0,
   "expires_at": 1703232000,
   "size": "1920x1080",
-  "seconds": "5",
+  "seconds": "10",
   "quality": "standard",
   "remixed_from_video_id": null,
   "error": {
     "message": "Content policy violation",
-    "type": "invalid_request_error"
+    "type": "server_error"
   }
 }
 ```
@@ -223,19 +284,64 @@ curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6" \
 #### 请求示例
 
 ```bash
-curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6/content" \
+curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6g7h8i9j0k1l2/content" \
   -H "Authorization: Bearer sk-xxxx" \
   -o "output.mp4"
 ```
 
 #### 响应
 
-直接返回视频文件流。
+返回 302 重定向到视频 URL。
 
-| 响应头 | 描述 |
-|--------|------|
-| Content-Type | `video/mp4` |
-| Content-Disposition | `attachment; filename="video_xxx.mp4"` |
+| HTTP 状态码 | 描述 |
+|-------------|------|
+| 302 | 重定向到视频下载链接 |
+| 400 | 视频未准备好或生成失败 |
+| 404 | 视频任务不存在 |
+
+---
+
+## 聊天补全接口
+
+### POST /v1/chat/completions
+
+统一的聊天补全接口，支持图片和视频生成。
+
+#### 请求示例
+
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+  -H "Authorization: Bearer sk-xxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "sora-video-landscape-10s",
+    "messages": [
+      {"role": "user", "content": "一只猫咪在草地上奔跑"}
+    ],
+    "stream": true
+  }'
+```
+
+#### 多模态请求（图生视频）
+
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+  -H "Authorization: Bearer sk-xxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "sora-video-landscape-10s",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "让图片中的猫咪动起来"},
+          {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+        ]
+      }
+    ],
+    "stream": true
+  }'
+```
 
 ---
 
@@ -263,28 +369,38 @@ curl "http://localhost:8000/v1/videos/video_a1b2c3d4e5f6/content" \
 
 ---
 
-## 完整使用流程
+## 完整使用流程（异步模式）
 
 ```bash
-# 1. 创建视频任务
+# 1. 创建视频任务（异步模式）
 VIDEO_ID=$(curl -s -X POST "http://localhost:8000/v1/videos" \
   -H "Authorization: Bearer sk-xxxx" \
-  -F "prompt=一只猫咪在草地上奔跑" \
-  -F "seconds=5" | jq -r '.id')
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "一只猫咪在草地上奔跑",
+    "seconds": "10",
+    "async_mode": true
+  }' | jq -r '.id')
 
 echo "Task ID: $VIDEO_ID"
 
 # 2. 轮询查询状态
 while true; do
-  STATUS=$(curl -s "http://localhost:8000/v1/videos/$VIDEO_ID" \
-    -H "Authorization: Bearer sk-xxxx" | jq -r '.status')
+  RESPONSE=$(curl -s "http://localhost:8000/v1/videos/$VIDEO_ID" \
+    -H "Authorization: Bearer sk-xxxx")
   
-  echo "Status: $STATUS"
+  STATUS=$(echo $RESPONSE | jq -r '.status')
+  PROGRESS=$(echo $RESPONSE | jq -r '.progress')
+  
+  echo "Status: $STATUS, Progress: $PROGRESS%"
   
   if [ "$STATUS" = "succeeded" ]; then
+    URL=$(echo $RESPONSE | jq -r '.url')
+    echo "Video URL: $URL"
     break
   elif [ "$STATUS" = "failed" ]; then
-    echo "Generation failed!"
+    ERROR=$(echo $RESPONSE | jq -r '.error.message')
+    echo "Generation failed: $ERROR"
     exit 1
   fi
   
@@ -294,7 +410,20 @@ done
 # 3. 下载视频
 curl "http://localhost:8000/v1/videos/$VIDEO_ID/content" \
   -H "Authorization: Bearer sk-xxxx" \
-  -o "video.mp4"
+  -L -o "video.mp4"
 
 echo "Video saved to video.mp4"
+```
+
+## 完整使用流程（同步模式）
+
+```bash
+# 直接创建并等待完成
+curl -X POST "http://localhost:8000/v1/videos" \
+  -H "Authorization: Bearer sk-xxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "一只猫咪在草地上奔跑",
+    "seconds": "10"
+  }' | jq '.'
 ```

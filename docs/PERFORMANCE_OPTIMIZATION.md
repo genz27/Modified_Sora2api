@@ -47,6 +47,19 @@ async with pool.write_connection() as conn:
 - 使用 `threading.RLock` 替代 `threading.Lock`
 - 避免同一线程重入死锁
 
+### 6. 自适应轮询系统 (`src/services/generation_handler.py`)
+- 根据生成进度动态调整轮询间隔
+- 初始阶段 (0-30%): 5 秒间隔
+- 中间阶段 (30-70%): 3 秒间隔
+- 最终阶段 (70-100%): 2 秒间隔
+- 停滞检测：连续 3 次无进度变化时增加间隔
+- 最大间隔限制：10 秒
+
+### 7. 批量操作并发控制
+- 批量测试 Token：最大 5 并发
+- 批量激活 Sora2：最大 3 并发
+- 批量添加 Token：顺序处理，带重复检测
+
 ## 待优化项
 
 ### 高优先级

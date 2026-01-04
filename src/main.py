@@ -10,6 +10,8 @@ from pathlib import Path
 from .core.config import config
 from .core.database import Database
 from .core.db_pool import init_pool, close_pool
+from .core.db_adapter import init_adapter, close_adapter
+from .core.redis_manager import init_redis, close_redis
 from .services.token_manager import TokenManager
 from .services.proxy_manager import ProxyManager
 from .services.load_balancer import LoadBalancer
@@ -104,15 +106,27 @@ async def startup_event():
     # Get config from setting.toml
     config_dict = config.get_raw_config()
 
-    # Check if database exists
-    is_first_startup = not db.db_exists()
+    # Initialize database adapter (SQLite or MySQL based on config)
+    adapter = await init_adapter()
+    print(f"✓ Database adapter initialized ({config.db_type})")
+
+    # Initialize Redis manager
+    redis_mgr = await init_redis()
+    if redis_mgr.is_connected:
+        print("✓ Redis manager initialized (distributed mode)")
+    else:
+        print("✓ Redis manager initialized (local mode)")
+
+    # Check if database exists (for SQLite)
+    is_first_startup = not db.db_exists() if config.db_type == "sqlite" else False
 
     # Initialize database tables
     await db.init_db()
 
-    # Initialize database connection pool for better concurrency
-    await init_pool(db.db_path, read_pool_size=20)
-    print("✓ Database connection pool initialized (read_pool_size=20, WAL mode)")
+    # Initialize database connection pool for better concurrency (SQLite only)
+    if config.db_type == "sqlite":
+        await init_pool(db.db_path, read_pool_size=20)
+        print("✓ Database connection pool initialized (read_pool_size=20, WAL mode)")
 
     # Handle database initialization based on startup type
     if is_first_startup:
@@ -166,9 +180,16 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown"""
     await generation_handler.file_cache.stop_cleanup_task()
-    # Close database connection pool
-    await close_pool()
-    print("✓ Database connection pool closed")
+    # Close database connection pool (SQLite only)
+    if config.db_type == "sqlite":
+        await close_pool()
+        print("✓ Database connection pool closed")
+    # Close database adapter
+    await close_adapter()
+    print("✓ Database adapter closed")
+    # Close Redis manager
+    await close_redis()
+    print("✓ Redis manager closed")
 
 if __name__ == "__main__":
     uvicorn.run(
