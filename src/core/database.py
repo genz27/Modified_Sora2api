@@ -11,6 +11,8 @@ from .db_pool import get_db_connection
 from .config import config
 
 
+import warnings
+
 class _MySQLConnectionWrapper:
     """Wrapper to make MySQL cursor behave like SQLite connection"""
     
@@ -28,15 +30,20 @@ class _MySQLConnectionWrapper:
         sql = sql.replace("AUTOINCREMENT", "AUTO_INCREMENT")
         sql = sql.replace("INSERT OR IGNORE", "INSERT IGNORE")
         
-        if params:
-            await self._cursor.execute(sql, params)
-        else:
-            await self._cursor.execute(sql)
+        # Suppress MySQL warnings for CREATE TABLE IF NOT EXISTS, etc.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if params:
+                await self._cursor.execute(sql, params)
+            else:
+                await self._cursor.execute(sql)
         return self._cursor
     
     async def executemany(self, sql: str, params_list: list):
         sql = sql.replace("?", "%s")
-        await self._cursor.executemany(sql, params_list)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            await self._cursor.executemany(sql, params_list)
     
     async def commit(self):
         await self._conn.commit()
