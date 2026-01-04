@@ -430,28 +430,27 @@ def _extract_character_info(chunks_data: list) -> dict:
 
 
 # ============================================================
-# /v1/videos - Video Generation
+# /v1/videos - Video Generation (OpenAI Sora Compatible)
 # ============================================================
 
-@router.post("/v1/videos")
+@router.post("/v1/videos", status_code=201)
 async def create_video(
     request: Request,
-    prompt: str = Form(None, description="Video generation prompt (use @username to reference characters)"),
-    model: str = Form("sora-video-10s", description="Model ID"),
+    prompt: str = Form(None, description="Video generation prompt"),
+    model: str = Form("sora-video-landscape-10s", description="Model ID"),
     seconds: Optional[str] = Form(None, description="Duration: '10', '15', or '25'"),
+    size: Optional[str] = Form(None, description="Output resolution (e.g., '1920x1080', '1080x1920')"),
     orientation: Optional[str] = Form(None, description="Orientation: 'landscape' or 'portrait'"),
-    style_id: Optional[str] = Form(None, description="Video style: festive, retro, news, selfie, handheld, anime, comic, golden, vintage"),
-    input_reference: Optional[UploadFile] = File(None, description="Reference image file for image-to-video"),
-    input_image: Optional[str] = Form(None, description="Base64 encoded reference image for image-to-video"),
-    remix_target_id: Optional[str] = Form(None, description="Sora share link video ID for remix (e.g., s_xxx)"),
+    style_id: Optional[str] = Form(None, description="Video style"),
+    input_reference: Optional[UploadFile] = File(None, description="Reference image file"),
+    input_image: Optional[str] = Form(None, description="Base64 encoded reference image"),
+    remix_target_id: Optional[str] = Form(None, description="Remix target video ID"),
+    metadata: Optional[str] = Form(None, description="Extended parameters (JSON string)"),
     api_key: str = Depends(verify_api_key_header)
 ):
-    """Create video generation
+    """Create video generation (OpenAI Sora Compatible)
     
     Supports both multipart/form-data and JSON body.
-    Returns final result only (non-streaming output).
-    
-    To use a character, include @username in the prompt (e.g., "@my_cat walking in the park").
     """
     try:
         # Check if JSON body
@@ -461,25 +460,45 @@ async def create_video(
             prompt = body.get("prompt", prompt)
             model = body.get("model", model)
             seconds = body.get("seconds", seconds)
+            size = body.get("size", size)
             orientation = body.get("orientation", orientation)
             style_id = body.get("style_id", style_id)
             input_image = body.get("input_image", input_image)
             remix_target_id = body.get("remix_target_id", remix_target_id)
+            metadata = body.get("metadata", metadata)
         
         if not prompt:
             raise HTTPException(status_code=400, detail="prompt is required")
         
-        # Determine model from seconds/orientation
+        # Parse size to determine orientation
+        if size and not orientation:
+            try:
+                width, height = map(int, size.lower().replace('*', 'x').split('x'))
+                orientation = "portrait" if height > width else "landscape"
+            except:
+                orientation = "landscape"
+        
+        # Default values
+        duration = seconds or "10"
+        orient = orientation or "landscape"
+        
+        # Determine final model
         final_model = model
-        if seconds or orientation:
-            duration = seconds or "10"
-            orient = orientation or "landscape"
+        if model in ["sora-2", "sora"]:
+            # Map sora-2 to internal model
             if duration == "25":
-                final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-25s"
+                final_model = f"sora-video-{orient}-25s"
             elif duration == "15":
-                final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-15s"
+                final_model = f"sora-video-{orient}-15s"
             else:
-                final_model = f"sora-video-{'portrait' if orient == 'portrait' else 'landscape'}-10s"
+                final_model = f"sora-video-{orient}-10s"
+        elif seconds or orientation:
+            if duration == "25":
+                final_model = f"sora-video-{orient}-25s"
+            elif duration == "15":
+                final_model = f"sora-video-{orient}-15s"
+            else:
+                final_model = f"sora-video-{orient}-10s"
         
         # Validate model
         if final_model not in MODEL_CONFIG:
@@ -489,7 +508,7 @@ async def create_video(
         if model_config["type"] != "video":
             raise HTTPException(status_code=400, detail=f"Model {final_model} is not a video model")
         
-        # Process reference image for image-to-video
+        # Process reference image
         image_data = None
         if input_reference:
             content = await input_reference.read()
@@ -499,37 +518,116 @@ async def create_video(
             if "base64," in image_data:
                 image_data = image_data.split("base64,", 1)[1]
         
-        # Non-streaming: collect all chunks and return final result
+        # Generate video
         chunks = []
         async for chunk in generation_handler.handle_generation(
             model=final_model,
             prompt=prompt,
             image=image_data,
             remix_target_id=remix_target_id,
-            stream=True,  # Internal streaming
+            stream=True,
             style_id=style_id
         ):
             chunks.append(chunk)
         
-        # Extract final URL
+        # Extract result
         video_info = _extract_video_info_from_chunks(chunks)
         url = video_info.get("url") or _extract_url_from_chunks(chunks)
         permalink = video_info.get("permalink")
+        
+        video_id = f"video_{uuid.uuid4().hex[:24]}"
+        created_at = int(time.time())
+        
         if url:
-            return JSONResponse(content={
-                "id": f"video-{uuid.uuid4().hex[:24]}",
-                "object": "video",
-                "created": int(time.time()),
-                "model": final_model,
-                "data": [{"url": url, "permalink": permalink, "revised_prompt": prompt}]
-            })
+            # Return OpenAI Sora compatible response
+            return JSONResponse(
+                status_code=201,
+                content={
+                    "id": video_id,
+                    "object": "video",
+                    "model": model,
+                    "created_at": created_at,
+                    "status": "succeeded",
+                    "progress": 100,
+                    "expires_at": created_at + 86400,  # 24 hours
+                    "size": size or f"{model_config.get('width', 1920)}x{model_config.get('height', 1080)}",
+                    "seconds": duration,
+                    "quality": "standard",
+                    "url": url,
+                    "permalink": permalink
+                }
+            )
         else:
             raise HTTPException(status_code=500, detail="Video generation failed")
     
     except HTTPException:
         raise
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": {"message": str(e), "type": "server_error", "param": None, "code": None}})
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"message": str(e), "type": "server_error"}}
+        )
+
+
+@router.get("/v1/videos/{video_id}")
+async def get_video(
+    video_id: str,
+    api_key: str = Depends(verify_api_key_header)
+):
+    """Get video task status (OpenAI Sora Compatible)"""
+    from ..core.database import Database
+    db = Database()
+    
+    # Try to get task from database
+    task = await db.get_task(video_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    created_at = int(task.created_at.timestamp()) if task.created_at else int(time.time())
+    
+    response = {
+        "id": video_id,
+        "object": "video",
+        "model": task.model,
+        "created_at": created_at,
+        "status": "succeeded" if task.status == "completed" else ("failed" if task.status == "failed" else "processing"),
+        "progress": int(task.progress) if task.progress else 0,
+        "expires_at": created_at + 86400,
+        "size": "1920x1080",
+        "seconds": "10",
+        "quality": "standard",
+        "remixed_from_video_id": None,
+        "error": {"message": task.error_message} if task.error_message else None
+    }
+    
+    if task.result_urls:
+        response["url"] = task.result_urls
+    
+    return JSONResponse(content=response)
+
+
+@router.get("/v1/videos/{video_id}/content")
+async def get_video_content(
+    video_id: str,
+    variant: Optional[str] = None,
+    api_key: str = Depends(verify_api_key_header)
+):
+    """Download video content (OpenAI Sora Compatible)"""
+    from ..core.database import Database
+    import httpx
+    
+    db = Database()
+    task = await db.get_task(video_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    if task.status != "completed" or not task.result_urls:
+        raise HTTPException(status_code=400, detail="Video not ready for download")
+    
+    # Redirect to video URL
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=task.result_urls, status_code=302)
 
 
 # ============================================================
