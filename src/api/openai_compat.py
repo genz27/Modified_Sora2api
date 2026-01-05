@@ -938,19 +938,19 @@ async def get_video_content(
     video_id: str,
     api_key: str = Depends(verify_api_key_header)
 ):
-    """Get video content (redirect to actual video URL)
+    """Get video content URL (returns direct video URL)
     
-    Redirects to the video URL for download when the task is completed.
+    Returns the video direct URL as plain text when the task is completed.
     Compatible with new-api-main sora2 relay format.
     """
-    from fastapi.responses import RedirectResponse
+    from fastapi.responses import PlainTextResponse
     
     # First check in-memory tasks
     task_info = _video_tasks.get(video_id)
     if task_info and isinstance(task_info, dict):
         if task_info["status"] != "completed":
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail={
                     "error": {
                         "message": f"Task not completed. Current status: {task_info['status']}",
@@ -962,7 +962,7 @@ async def get_video_content(
         result_url = task_info.get("result_url")
         if not result_url:
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail={
                     "error": {
                         "message": "Video content not available",
@@ -971,7 +971,8 @@ async def get_video_content(
                 }
             )
         
-        return RedirectResponse(url=result_url)
+        # Return direct URL as plain text
+        return PlainTextResponse(content=result_url)
     
     # Fallback to database
     from ..core.database import Database
@@ -980,7 +981,7 @@ async def get_video_content(
     task = await db.get_task(video_id)
     if not task:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail={
                 "error": {
                     "message": "Task not found",
@@ -991,7 +992,7 @@ async def get_video_content(
     
     if task.status == "failed":
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail={
                 "error": {
                     "message": f"Video generation failed: {task.error_message or 'Unknown error'}",
@@ -1002,7 +1003,7 @@ async def get_video_content(
     
     if task.status != "completed" or not task.result_urls:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail={
                 "error": {
                     "message": f"Task not completed. Current status: {task.status}",
@@ -1011,7 +1012,8 @@ async def get_video_content(
             }
         )
     
-    return RedirectResponse(url=task.result_urls)
+    # Return direct URL as plain text
+    return PlainTextResponse(content=task.result_urls)
 
 
 # ============================================================
