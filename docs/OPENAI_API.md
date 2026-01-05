@@ -51,40 +51,32 @@ Authorization: Bearer YOUR_API_KEY
 
 ## POST /v1/videos
 
-生成视频。
+生成视频（默认异步模式）。
 
 ### 请求参数
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|:----:|------|
-| `prompt` | string | ✅ | 视频生成提示词 (使用 `@username` 引用角色) |
-| `model` | string | | 模型 ID，默认 `sora-video-10s` |
-| `seconds` | string | | 时长: `"10"` 或 `"15"` |
-| `orientation` | string | | 方向: `"landscape"` 或 `"portrait"` |
+| `prompt` | string | ✅ | 视频生成提示词 |
+| `model` | string | | 模型: `sora-2` 或 `sora-2-pro`，默认 `sora-2` |
+| `seconds` | string | | 时长: `"10"` 或 `"15"`，默认 `"15"` |
+| `size` | string | | 分辨率: `"720x1280"` (竖屏) 或 `"1280x720"` (横屏) |
 | `style_id` | string | | 风格: `festive`, `retro`, `news`, `selfie`, `handheld`, `anime`, `comic`, `golden`, `vintage` |
 | `input_reference` | file | | 参考图片文件 (仅 form-data，用于图生视频) |
 | `input_image` | string | | Base64 编码的参考图片 (用于图生视频) |
-| `remix_target_id` | string | | Remix 视频 ID (如 `s_xxx`)，**仅支持与 prompt/model/seconds/orientation 配合使用** |
-| `async_mode` | boolean | | 异步模式，默认 `false`。设为 `true` 则立即返回任务ID |
+| `remix_target_id` | string | | Remix 视频 ID |
+| `async_mode` | boolean | | 异步模式，默认 `true`。设为 `false` 则等待生成完成 |
 
-> **同步模式（默认）**: 等待生成完成后返回结果，包含视频 URL
+> **异步模式（默认）**: 立即返回 `id` 和 `status="queued"`，通过 `GET /v1/videos/{id}` 轮询状态
 >
-> **异步模式**: 设置 `async_mode=true`，立即返回 `video_id` 和 `status="processing"`，通过 `GET /v1/videos/{video_id}` 轮询状态
->
-> **使用角色**: 在 `prompt` 中使用 `@username` 引用已创建的角色，例如 `"@my_cat walking in the park"`
-> 
-> **Remix 模式**: 使用 `remix_target_id` 时，仅支持 `prompt`、`model`、`seconds`、`orientation` 参数，不支持 `style_id` 和图片参数
+> **同步模式**: 设置 `async_mode=false`，等待生成完成后返回结果
 
-### 可用模型
+### 可用模型和尺寸
 
-| 模型 ID | 时长 | 方向 |
-|---------|------|------|
-| `sora-video-10s` | 10秒 | 横屏 |
-| `sora-video-15s` | 15秒 | 横屏 |
-| `sora-video-landscape-10s` | 10秒 | 横屏 |
-| `sora-video-landscape-15s` | 15秒 | 横屏 |
-| `sora-video-portrait-10s` | 10秒 | 竖屏 |
-| `sora-video-portrait-15s` | 15秒 | 竖屏 |
+| 模型 | 支持尺寸 |
+|------|----------|
+| `sora-2` | `720x1280`, `1280x720` |
+| `sora-2-pro` | `720x1280`, `1280x720`, `1024x1792`, `1792x1024` |
 
 ### 请求示例
 
@@ -94,9 +86,9 @@ Authorization: Bearer YOUR_API_KEY
 curl -X POST "http://localhost:8000/v1/videos" \
   -H "Authorization: Bearer han1234" \
   -F prompt="A cat walking in the garden" \
-  -F model="sora-video-10s" \
-  -F seconds="10" \
-  -F style_id="anime" \
+  -F model="sora-2" \
+  -F seconds="15" \
+  -F size="720x1280" \
   -F input_reference="@image.jpg;type=image/jpeg"
 ```
 
@@ -108,58 +100,45 @@ curl -X POST "http://localhost:8000/v1/videos" \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "A cat walking in the garden",
-    "model": "sora-video-10s",
-    "seconds": "10",
-    "style_id": "anime"
-  }'
-```
-
-**使用角色 (在 prompt 中使用 @username):**
-
-```bash
-curl -X POST "http://localhost:8000/v1/videos" \
-  -H "Authorization: Bearer han1234" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "@my_cat walking in the park happily",
-    "model": "sora-video-10s"
-  }'
-```
-
-**Remix 模式:**
-
-```bash
-curl -X POST "http://localhost:8000/v1/videos" \
-  -H "Authorization: Bearer han1234" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "change to watercolor style",
-    "model": "sora-video-10s",
-    "remix_target_id": "s_68e3a06dcd888191b150971da152c1f5"
+    "model": "sora-2",
+    "seconds": "15",
+    "size": "720x1280"
   }'
 ```
 
 ### 响应示例
 
-**成功:**
+**异步模式（默认）:**
 
 ```json
 {
-  "id": "video-abc123def456789012345678",
+  "id": "sora-2-abc123def456",
   "object": "video",
-  "created": 1702388400,
-  "model": "sora-video-10s",
-  "data": [
-    {
-      "url": "http://localhost:8000/tmp/video_xxx.mp4",
-      "permalink": "https://sora.chatgpt.com/p/s_xxx",
-      "revised_prompt": "A cat walking in the garden"
-    }
-  ]
+  "model": "sora-2",
+  "status": "queued",
+  "progress": 0,
+  "created_at": 1702388400000,
+  "seconds": "15",
+  "size": "720x1280"
 }
 ```
 
-`data[0].permalink` 为该视频在 Sora 的分享页链接（如可获取到）。
+**同步模式（async_mode=false）:**
+
+```json
+{
+  "id": "sora-2-abc123def456",
+  "object": "video",
+  "model": "sora-2",
+  "status": "completed",
+  "progress": 100,
+  "created_at": 1702388400000,
+  "completed_at": 1702388500000,
+  "seconds": "15",
+  "size": "720x1280",
+  "result_url": "https://videos.sora.com/xxx/video.mp4"
+}
+```
 
 **错误:**
 
