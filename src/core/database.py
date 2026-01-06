@@ -1323,7 +1323,7 @@ class Database:
                 SELECT 
                     SUM(CASE 
                         WHEN status IN ('processing','in_progress')
-                             AND task_id LIKE 'task_%'
+                             AND task_id LIKE 'task_%%'
                              AND (
                                     (model LIKE 'sora-video%%' AND created_at >= ?)
                                  OR (model NOT LIKE 'sora-video%%' AND created_at >= ?)
@@ -1331,7 +1331,7 @@ class Database:
                         THEN 1 ELSE 0 END) as chat_inflight,
                     SUM(CASE 
                         WHEN status IN ('processing','in_progress')
-                             AND task_id NOT LIKE 'task_%'
+                             AND task_id NOT LIKE 'task_%%'
                              AND (
                                     (model LIKE 'sora-video%%' AND created_at >= ?)
                                  OR (model NOT LIKE 'sora-video%%' AND created_at >= ?)

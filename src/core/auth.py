@@ -67,3 +67,4 @@ async def verify_api_key_header(credentials: HTTPAuthorizationCredentials = Secu
     if not AuthManager.verify_api_key(api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
     return api_key
+    return api_key
