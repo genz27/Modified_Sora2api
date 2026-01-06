@@ -16,8 +16,12 @@ from .cloudflare_solver import (
     get_cloudflare_state,
 )
 from ..core.logger import debug_logger
-from ..core.http_utils import build_simple_headers
+from ..core.http_utils import build_simple_headers, get_random_fingerprint, get_random_user_agent
 from .token_cache import get_token_cache
+
+
+# 导入默认 UA（兼容旧代码）
+from ..core.http_utils import DEFAULT_USER_AGENT
 
 
 class TokenManager:
@@ -65,7 +69,7 @@ class TokenManager:
             if cf_state.user_agent:
                 headers["User-Agent"] = cf_state.user_agent
             else:
-                headers["User-Agent"] = DEFAULT_USER_AGENT
+                headers["User-Agent"] = get_random_user_agent()
         
         # 应用全局 Cloudflare cookies 到 session
         if cf_state.is_valid:
@@ -74,7 +78,7 @@ class TokenManager:
         request_kwargs = {
             "headers": headers,
             "timeout": 30,
-            "impersonate": "safari_ios",  # 使用 iOS Safari 指纹
+            "impersonate": get_random_fingerprint(),  # 使用随机手机指纹
             **kwargs,
         }
         
@@ -646,7 +650,7 @@ class TokenManager:
                     "refresh_token": refresh_token
                 },
                 "timeout": 30,
-                "impersonate": "chrome"  # 自动生成 User-Agent 和浏览器指纹
+                "impersonate": get_random_fingerprint()  # 使用随机手机指纹
             }
 
             if proxy_url:

@@ -17,7 +17,7 @@ from .cloudflare_solver import (
 )
 from ..core.config import config
 from ..core.logger import debug_logger
-from ..core.http_utils import build_sora_headers, DEFAULT_USER_AGENT
+from ..core.http_utils import build_sora_headers, DEFAULT_USER_AGENT, get_random_fingerprint, get_random_user_agent
 
 
 class SoraClient:
@@ -107,10 +107,13 @@ class SoraClient:
 
     async def _get_session(self, token: str) -> AsyncSession:
         """获取或创建持久化 session，并应用全局 Cloudflare cookies"""
+        from ..core.http_utils import get_random_fingerprint
+        
         cf_state = get_cloudflare_state(token=token)
         
         if token not in self._sessions:
-            self._sessions[token] = AsyncSession(impersonate="chrome120")
+            # 使用随机手机指纹
+            self._sessions[token] = AsyncSession(impersonate=get_random_fingerprint())
         
         session = self._sessions[token]
         
@@ -740,7 +743,7 @@ class SoraClient:
         kwargs = {
             "json": json_data,
             "timeout": 30,
-            "impersonate": "chrome"
+            "impersonate": get_random_fingerprint()
         }
 
         if proxy_url:
@@ -859,7 +862,7 @@ class SoraClient:
 
         kwargs = {
             "timeout": self.timeout,
-            "impersonate": "chrome"
+            "impersonate": get_random_fingerprint()
         }
 
         if proxy_url:

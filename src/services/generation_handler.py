@@ -17,6 +17,7 @@ from ..core.database import Database
 from ..core.models import Task, RequestLog, CharacterOptions, Character
 from ..core.config import config
 from ..core.logger import debug_logger
+from ..core.http_utils import get_random_fingerprint
 
 
 @dataclass
@@ -343,7 +344,7 @@ class GenerationHandler:
 
         kwargs = {
             "timeout": 30,
-            "impersonate": "chrome"
+            "impersonate": get_random_fingerprint()
         }
 
         if proxy_url:
