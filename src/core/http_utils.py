@@ -1,7 +1,7 @@
 """HTTP utilities - Common HTTP headers and request helpers"""
 from typing import Optional
 
-# Chrome 131 浏览器请求头模板
+# Chrome Mobile 浏览器请求头模板 (iPhone)
 CHROME_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Encoding": "gzip, deflate, br, zstd",
@@ -11,15 +11,16 @@ CHROME_HEADERS = {
     "Pragma": "no-cache",
     "Priority": "u=1, i",
     "Referer": "https://sora.chatgpt.com/",
-    "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+    "Sec-Ch-Ua-Mobile": "?1",
+    "Sec-Ch-Ua-Platform": '"iOS"',
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
 }
 
-DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+# iPhone 15 Pro Max + Chrome 131 Mobile UA
+DEFAULT_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1"
 
 
 def build_sora_headers(
