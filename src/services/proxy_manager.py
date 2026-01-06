@@ -43,15 +43,42 @@ class ProxyManager:
         - https://user:pass@host:port
         - socks5://user:pass@host:port
         - socks5h://user:pass@host:port
+        - socks5://host:port:user:pass (协议://IP:端口:用户名:密码)
         - host:port (assumes http, no auth)
-        - host:port:user:pass (IP:端口:用户名:密码 format)
+        - host:port:user:pass (IP:端口:用户名:密码 format, assumes http)
         """
         line = line.strip()
         if not line:
             return None
         
-        # Already a URL format (http, https, socks5, socks5h)
+        # Check if it's a URL format with protocol
         if line.startswith(("http://", "https://", "socks5://", "socks5h://")):
+            # Check if it's already in standard format (has @)
+            if "@" in line:
+                return line
+            
+            # Handle format: protocol://host:port:user:pass
+            # e.g., socks5://38.134.216.107:13611:helX01iJa8:jbMXPCMoja
+            try:
+                protocol_end = line.index("://") + 3
+                protocol = line[:protocol_end]  # e.g., "socks5://"
+                rest = line[protocol_end:]  # e.g., "38.134.216.107:13611:helX01iJa8:jbMXPCMoja"
+                
+                parts = rest.split(":")
+                if len(parts) >= 4:
+                    host = parts[0]
+                    port = parts[1]
+                    user = parts[2]
+                    # Password might contain colons, join remaining parts
+                    password = ":".join(parts[3:])
+                    if port.isdigit():
+                        return f"{protocol}{user}:{password}@{host}:{port}"
+                elif len(parts) == 2:
+                    # Just host:port, no auth
+                    return line
+            except Exception as e:
+                print(f"⚠️ Failed to parse proxy URL: {line}, error: {e}")
+            
             return line
         
         # Count colons to determine format
@@ -65,7 +92,7 @@ class ProxyManager:
             print(f"⚠️ Invalid proxy format (port not numeric): {line}")
             return None
         
-        # Format: host:port:user:pass (exactly 3 colons)
+        # Format: host:port:user:pass (3+ colons)
         # Split from the right to handle passwords with colons
         if colon_count >= 3:
             parts = line.split(":")
